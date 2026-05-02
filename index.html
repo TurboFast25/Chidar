@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chidar Room Analyzer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Instrument+Serif:ital@0;1&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="panel">
+        <p class="eyebrow">Chidar</p>
+        <h1>Local room analyzer</h1>
+        <p class="lede">
+          Upload a room photo and generate a placement map locally in the browser.
+          No API, no credits, no backend inference.
+        </p>
+
+        <label class="upload-card" for="room-upload">
+          <span class="upload-title">Upload room image</span>
+          <span class="upload-copy">JPG, PNG, or WEBP</span>
+          <input id="room-upload" type="file" accept="image/*" />
+        </label>
+
+        <div class="controls">
+          <button id="analyze-button" class="primary-button" type="button" disabled>
+            Analyze Room
+          </button>
+          <button id="reset-button" class="ghost-button" type="button">
+            Reset
+          </button>
+          <label class="toggle">
+            <input id="toggle-overlay" type="checkbox" checked />
+            <span>Show overlays</span>
+          </label>
+        </div>
+
+        <section class="info-card">
+          <div class="section-heading">
+            <h2>Summary</h2>
+            <span id="status-badge" class="tag muted">Idle</span>
+          </div>
+          <div id="summary-panel" class="summary-panel">
+            Upload an image to begin.
+          </div>
+        </section>
+
+        <section class="info-card">
+          <div class="section-heading">
+            <h2>Placement guidance</h2>
+          </div>
+          <ul id="guidance-list" class="guidance-list">
+            <li>No guidance yet.</li>
+          </ul>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <div class="workspace-header">
+          <div>
+            <p class="eyebrow">Scene Map</p>
+            <h2>Detected floor, walls, and occupied zones</h2>
+          </div>
+        </div>
+
+        <section class="viewer-card">
+          <div id="drop-hint" class="drop-hint">
+            Upload a room image to generate a local analysis.
+          </div>
+          <div id="viewer" class="viewer" hidden>
+            <img id="room-image" class="room-image" alt="Uploaded room" />
+            <svg id="overlay" class="overlay" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
