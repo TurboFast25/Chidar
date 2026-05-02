@@ -13,11 +13,13 @@ const state = {
   roomImageDataUrl: "",
   sourceFile: null,
   sourceFileInfo: null,
+  analysisInput: null,
   analysis: null,
   analyzing: false,
   calibrationMode: false,
   calibrationPoints: [],
   scaleCalibration: null,
+  baseRoomModel: null,
   roomModel: null,
   selectedProductId: null,
   placementMode: false,
@@ -98,8 +100,10 @@ async function handleUpload(event) {
   state.sourceFile = file;
   state.sourceFileInfo = fileInfo;
   state.roomImageDataUrl = preview;
+  state.analysisInput = null;
   state.analysis = null;
   state.scaleCalibration = null;
+  state.baseRoomModel = null;
   state.roomModel = null;
   state.calibrationMode = false;
   state.calibrationPoints = [];
@@ -120,9 +124,13 @@ async function analyzeCurrentRoom() {
   render();
 
   try {
-    state.analysis = await analyzeRoomImageDataUrl(state.roomImageDataUrl);
+    state.analysisInput = await extractImageAnalysisPayload(state.roomImageDataUrl);
+    const response = await requestRoomModel(state.analysisInput, state.scaleCalibration);
+    state.analysis = response.analysis;
+    state.baseRoomModel = response.roomModel;
     rebuildRoomModel();
   } catch (error) {
+    state.analysisInput = null;
     state.analysis = {
       summary: `Surface detection failed: ${error.message}`,
       roomType: "",
@@ -136,6 +144,7 @@ async function analyzeCurrentRoom() {
       dominantSide: "center",
       horizonPercent: 58,
     };
+    state.baseRoomModel = null;
     state.roomModel = null;
   } finally {
     state.analyzing = false;
@@ -147,11 +156,13 @@ function resetState() {
   state.roomImageDataUrl = "";
   state.sourceFile = null;
   state.sourceFileInfo = null;
+  state.analysisInput = null;
   state.analysis = null;
   state.analyzing = false;
   state.calibrationMode = false;
   state.calibrationPoints = [];
   state.scaleCalibration = null;
+  state.baseRoomModel = null;
   state.roomModel = null;
   state.selectedProductId = null;
   state.placementMode = false;
@@ -172,12 +183,12 @@ function render() {
   els.startCalibration.disabled = !hasImage;
   els.exportJson.disabled = !state.roomModel;
   els.exportObj.disabled = !state.roomModel;
-  els.saveScene.disabled = !state.roomModel || !hasScene;
+  els.saveScene.disabled = !state.roomModel;
   els.loadScene.disabled = !state.savedScenes.length;
   els.clearScene.disabled = !hasScene;
   els.statusBadge.textContent = state.analyzing ? "Detecting" : hasAnalysis ? "Surface mapped" : hasImage ? "Ready" : "Idle";
   els.calibrationBadge.textContent = state.scaleCalibration ? "Calibrated" : state.calibrationMode ? "Select points" : "Uncalibrated";
-  els.modelBadge.textContent = state.roomModel ? `${state.stagedItems.length} item${state.stagedItems.length === 1 ? "" : "s"} staged` : hasAnalysis ? "Awaiting placement" : "Waiting for scan";
+  els.modelBadge.textContent = state.roomModel ? `${state.roomModel.width.toFixed(1)}m x ${state.roomModel.depth.toFixed(1)}m x ${state.roomModel.height.toFixed(1)}m` : hasAnalysis ? "Model estimated" : "Waiting for scan";
   els.fileBadge.textContent = state.sourceFileInfo ? state.sourceFileInfo.kindLabel : "No file";
   els.dropHint.hidden = hasWorkspaceData;
   els.viewer.hidden = !hasImage;
@@ -190,23 +201,23 @@ function render() {
     els.summaryPanel.textContent = "Upload a room image to begin.";
     els.guidanceList.innerHTML = "<li>No guidance yet.</li>";
     els.overlay.innerHTML = "";
-    els.sceneOutput.textContent = "No scene model yet.";
+    els.sceneOutput.textContent = "No room model yet.";
     renderModelCanvas();
     return;
   }
 
   if (!hasAnalysis) {
-    els.summaryPanel.innerHTML = '<div class="metric"><strong>Scan status</strong>Run surface detection to estimate the floor plane and occupied zones before staging.</div>';
-    els.guidanceList.innerHTML = "<li>Detect surfaces before selecting a catalog item.</li>";
+    els.summaryPanel.innerHTML = '<div class="metric"><strong>Scan status</strong>Run room-model generation to estimate the floor polygon, wall zones, and room dimensions.</div>';
+    els.guidanceList.innerHTML = "<li>Generate the room model before exporting JSON or OBJ.</li>";
     els.overlay.innerHTML = "";
-    els.sceneOutput.textContent = "Detect surfaces to generate a stageable room scene payload.";
+    els.sceneOutput.textContent = "Generate the room model to produce an exportable room payload.";
     renderModelCanvas();
     return;
   }
 
   if (!hasImage) {
     els.dropHint.hidden = false;
-    els.dropHint.textContent = "Scene restored without the original image preview. Upload the matching room image to continue image-anchored placement.";
+    els.dropHint.textContent = "Model restored without the original image preview. Upload the matching room image to continue image-anchored refinement.";
   }
 
   renderSummary();
@@ -217,24 +228,50 @@ function render() {
 }
 
 function renderCatalog() {
-  els.catalogPanel.innerHTML = PRODUCT_CATALOG.map((product) => {
-    const isActive = state.selectedProductId === product.id;
-    return `
-      <button class="catalog-card${isActive ? " is-active" : ""}" type="button" data-product-id="${product.id}">
-        <strong>${escapeHtml(product.name)}</strong>
-        <span>${product.width.toFixed(2)}m x ${product.depth.toFixed(2)}m x ${product.height.toFixed(2)}m</span>
-        <span>${isActive ? "Tap floor to place" : "Select for placement"}</span>
-      </button>
+  if (!state.analysis || !state.roomModel) {
+    els.catalogPanel.innerHTML = `
+      <div class="metric">
+        <strong>Pending model</strong>
+        Generate the room model to inspect the detected shell, surfaces, and occupied regions.
+      </div>
     `;
-  }).join("");
+    return;
+  }
+
+  const roomArea = getRoomFloorArea(state.roomModel);
+  const obstacleCount = state.analysis.avoidZones?.length || 0;
+  const stagedCount = state.stagedItems.length;
+  els.catalogPanel.innerHTML = `
+    <div class="metric">
+      <strong>Room shell</strong>
+      ${state.roomModel.width.toFixed(2)}m x ${state.roomModel.depth.toFixed(2)}m x ${state.roomModel.height.toFixed(2)}m
+    </div>
+    <div class="metric">
+      <strong>Estimated floor area</strong>
+      ${roomArea.toFixed(2)} square meters
+    </div>
+    <div class="metric">
+      <strong>Detected walls</strong>
+      ${state.roomModel.walls.map((wall) => `${wall.name}: ${wall.width.toFixed(2)}m`).join(" | ")}
+    </div>
+    <div class="metric">
+      <strong>Occupied regions</strong>
+      ${obstacleCount ? `${obstacleCount} blocked floor zone${obstacleCount === 1 ? "" : "s"} detected` : "No major blocked regions detected"}
+    </div>
+    <div class="metric">
+      <strong>Optional staged items</strong>
+      ${stagedCount} item${stagedCount === 1 ? "" : "s"} placed for optional layout testing
+    </div>
+  `;
 }
 
 function renderSummary() {
   const analysis = state.analysis;
   const selectedItem = getSelectedItem();
   const placementText = state.selectedProductId
-    ? `Selected ${getProductById(state.selectedProductId)?.name || "item"}. Tap inside the floor polygon to place it.`
-    : "Select a catalog item to enter placement mode.";
+    ? `Selected ${getProductById(state.selectedProductId)?.name || "item"}. Tap inside the floor polygon to test-fit it in the model.`
+    : "Room shell generation is the primary output. Furniture placement is optional for layout checks.";
+  const roomArea = state.roomModel ? getRoomFloorArea(state.roomModel) : 0;
   const selectedItemMarkup = selectedItem
     ? `
       <div class="metric">
@@ -275,12 +312,24 @@ function renderSummary() {
       ${escapeHtml(formatScaleSummary())}
     </div>
     <div class="metric">
-      <strong>Placement mode</strong>
+      <strong>Estimated dimensions</strong>
+      ${escapeHtml(
+        state.roomModel
+          ? `${state.roomModel.width.toFixed(2)}m wide, ${state.roomModel.depth.toFixed(2)}m deep, ${state.roomModel.height.toFixed(2)}m high`
+          : "No room model yet.",
+      )}
+    </div>
+    <div class="metric">
+      <strong>Estimated floor area</strong>
+      ${escapeHtml(state.roomModel ? `${roomArea.toFixed(2)} square meters` : "No room model yet.")}
+    </div>
+    <div class="metric">
+      <strong>Modeling mode</strong>
       ${escapeHtml(placementText)}
     </div>
     <div class="metric">
-      <strong>Placement rules</strong>
-      Horizontal plane only, upright alignment, minimum surface area, and no overlap with blocked zones.
+      <strong>Model assumptions</strong>
+      Single-image estimation, horizontal floor plane, visible back wall, and deterministic scale from calibration when available.
     </div>
     ${selectedItemMarkup}
   `;
@@ -336,7 +385,7 @@ function renderSceneLibrary() {
         <button class="scene-entry" type="button" data-scene-id="${scene.id}">
           <strong>${escapeHtml(scene.name)}</strong>
           <span>${new Date(scene.savedAt).toLocaleString()}</span>
-          <span>${scene.items.length} item${scene.items.length === 1 ? "" : "s"}</span>
+          <span>${scene.payload?.room ? `${scene.payload.room.width.toFixed(1)}m x ${scene.payload.room.depth.toFixed(1)}m` : "room model"}</span>
         </button>
       `,
     )
@@ -608,7 +657,7 @@ function canPlaceItem(item, ignoredItemId = null) {
   });
 }
 
-function commitCalibration() {
+async function commitCalibration() {
   const realHeightMeters = Number(els.referenceHeight.value);
   const label = els.referenceLabel.value.trim() || "Reference object";
   if (!Number.isFinite(realHeightMeters) || realHeightMeters <= 0) {
@@ -632,22 +681,37 @@ function commitCalibration() {
     pixelsPerMeter: pixelHeight / realHeightMeters,
   };
   state.calibrationMode = false;
+  state.analyzing = true;
+  render();
+  try {
+    if (state.analysisInput) {
+      const response = await requestRoomModel(state.analysisInput, state.scaleCalibration);
+      state.analysis = response.analysis;
+      state.baseRoomModel = response.roomModel;
+    }
+  } catch (error) {
+    state.analysis = {
+      ...state.analysis,
+      summary: `Calibration updated, but model refresh failed: ${error.message}`,
+    };
+  } finally {
+    state.analyzing = false;
+  }
   rebuildRoomModel();
+  render();
 }
 
 function rebuildRoomModel() {
-  if (!state.analysis) {
+  if (!state.analysis || !state.baseRoomModel) {
     state.roomModel = null;
     return;
   }
 
-  const roomWidth = estimateRoomWidthMeters(state.analysis, state.scaleCalibration);
-  const roomDepth = estimateRoomDepthMeters(state.analysis, state.scaleCalibration);
-  const roomHeight = estimateRoomHeightMeters(state.scaleCalibration);
   state.roomModel = {
-    width: roomWidth,
-    depth: roomDepth,
-    height: roomHeight,
+    width: state.baseRoomModel.width,
+    depth: state.baseRoomModel.depth,
+    height: state.baseRoomModel.height,
+    floorArea: state.baseRoomModel.floorArea,
     objects: state.stagedItems.map((item) => ({
       id: item.id,
       name: item.name,
@@ -659,11 +723,7 @@ function rebuildRoomModel() {
       rotation: item.rotation,
       color: item.color,
     })),
-    walls: [
-      { name: "left wall", width: roomDepth, height: roomHeight },
-      { name: "back wall", width: roomWidth, height: roomHeight },
-      { name: "right wall", width: roomDepth, height: roomHeight },
-    ],
+    walls: state.baseRoomModel.walls,
   };
 }
 
@@ -671,11 +731,18 @@ function getRoomDimensions() {
   if (state.roomModel) {
     return state.roomModel;
   }
+  if (state.baseRoomModel) {
+    return state.baseRoomModel;
+  }
   return {
-    width: estimateRoomWidthMeters(state.analysis, state.scaleCalibration),
-    depth: estimateRoomDepthMeters(state.analysis, state.scaleCalibration),
-    height: estimateRoomHeightMeters(state.scaleCalibration),
+    width: 4.8,
+    depth: 5.4,
+    height: 2.7,
   };
+}
+
+function getRoomFloorArea(roomModel) {
+  return roomModel.floorArea || roomModel.width * roomModel.depth;
 }
 
 function handleViewChange() {
@@ -687,7 +754,7 @@ function handleViewChange() {
 
 function renderSceneOutput() {
   if (!state.roomModel || !state.analysis) {
-    els.sceneOutput.textContent = "No scene model yet.";
+    els.sceneOutput.textContent = "No room model yet.";
     return;
   }
 
@@ -697,7 +764,7 @@ function renderSceneOutput() {
 function buildScenePayload() {
   return {
     units: "meters",
-    source: "browser-ar-staging-framework",
+    source: "browser-room-model-framework",
     sourceFile: state.sourceFileInfo
       ? {
           name: state.sourceFileInfo.name,
@@ -726,12 +793,20 @@ function buildScenePayload() {
       width: Number(state.roomModel.width.toFixed(3)),
       depth: Number(state.roomModel.depth.toFixed(3)),
       height: Number(state.roomModel.height.toFixed(3)),
+      floorArea: Number(getRoomFloorArea(state.roomModel).toFixed(3)),
     },
     floorPolygon: (state.analysis.floorPolygon || []).map((point) => ({
       x: Number(point.x.toFixed(3)),
       y: Number(point.y.toFixed(3)),
     })),
     walls: state.roomModel.walls,
+    occupiedZones: (state.analysis.avoidZones || []).map((zone) => ({
+      name: zone.name,
+      x: Number(zone.x.toFixed(3)),
+      y: Number(zone.y.toFixed(3)),
+      width: Number(zone.width.toFixed(3)),
+      height: Number(zone.height.toFixed(3)),
+    })),
     placedFurniture: state.stagedItems.map((item) => ({
       id: item.id,
       productId: item.productId,
@@ -750,14 +825,14 @@ function exportSceneJson() {
   if (!state.roomModel) {
     return;
   }
-  downloadFile("chidar-ar-scene.json", JSON.stringify(buildScenePayload(), null, 2), "application/json");
+  downloadFile("chidar-room-model.json", JSON.stringify(buildScenePayload(), null, 2), "application/json");
 }
 
 function exportSceneObj() {
   if (!state.roomModel) {
     return;
   }
-  downloadFile("chidar-ar-scene.obj", buildObjText(state.roomModel), "text/plain");
+  downloadFile("chidar-room-model.obj", buildObjText(state.roomModel), "text/plain");
 }
 
 function downloadFile(filename, content, contentType) {
@@ -789,8 +864,8 @@ function renderModelCanvas() {
       width,
       height,
       state.analysis
-        ? "Select a catalog item and place it on the detected floor plane."
-        : "Detect surfaces to generate the stageable room volume.",
+        ? "Room surfaces detected. Export the model or optionally test-fit furniture."
+        : "Generate the room model to estimate the room shell.",
     );
     return;
   }
@@ -810,7 +885,7 @@ function drawCanvasMessage(context, width, height, message) {
   context.fillStyle = "rgba(58, 47, 38, 0.78)";
   context.font = "600 32px 'Space Grotesk', sans-serif";
   context.textAlign = "center";
-  context.fillText("AR Staging Preview", width / 2, height / 2 - 16);
+  context.fillText("3D Room Model", width / 2, height / 2 - 16);
   context.font = "500 22px 'Space Grotesk', sans-serif";
   context.fillStyle = "rgba(88, 74, 60, 0.72)";
   wrapCanvasText(context, message, width / 2, height / 2 + 28, width * 0.68, 30);
@@ -975,7 +1050,7 @@ function buildObjText(model) {
   });
 
   return [
-    "# Chidar AR staging model",
+    "# Chidar room model",
     ...vertices.map((vertex) => `v ${vertex.x} ${vertex.y} ${vertex.z}`),
     ...faces.map((face) => `f ${face.join(" ")}`),
     "",
@@ -1005,17 +1080,19 @@ function addBox(vertices, faces, x, y, z, width, height, depth) {
 }
 
 function saveCurrentScene() {
-  if (!state.roomModel || !state.analysis || !state.stagedItems.length) {
+  if (!state.roomModel || !state.analysis) {
     return;
   }
 
   const scene = {
     id: `scene-${Date.now()}`,
-    name: `${state.analysis.roomType || "room"} scene`,
+    name: `${state.analysis.roomType || "room"} model`,
     savedAt: new Date().toISOString(),
     payload: buildScenePayload(),
+    baseRoomModel: state.baseRoomModel,
     items: state.stagedItems,
     analysis: state.analysis,
+    analysisInput: state.analysisInput,
     calibration: state.scaleCalibration,
     sourceFileInfo: state.sourceFileInfo,
   };
@@ -1041,8 +1118,21 @@ function clearPlacements() {
 }
 
 function restoreScene(scene) {
+  state.analysisInput = scene.analysisInput || null;
   state.analysis = scene.analysis;
   state.scaleCalibration = scene.calibration;
+  state.baseRoomModel =
+    scene.baseRoomModel ||
+    (scene.payload?.room
+      ? {
+          width: scene.payload.room.width,
+          depth: scene.payload.room.depth,
+          height: scene.payload.room.height,
+          floorArea: scene.payload.room.floorArea,
+          walls: scene.payload.walls || [],
+          objects: [],
+        }
+      : null);
   state.sourceFileInfo = scene.sourceFileInfo;
   state.stagedItems = (scene.items || []).map((item) => ({ ...item }));
   state.selectedItemId = null;
@@ -1177,46 +1267,6 @@ function formatBytes(bytes) {
   return `${value.toFixed(value >= 10 || power === 0 ? 0 : 1)} ${units[power]}`;
 }
 
-function estimateRoomWidthMeters(analysis, calibration) {
-  const floor = analysis.floorPolygon || [];
-  const backLeft = floor[0];
-  const backRight = floor[1];
-  if (!backLeft || !backRight) {
-    return 4.8;
-  }
-  const widthPercent = Math.abs(backRight.x - backLeft.x);
-  if (!calibration) {
-    return clamp(widthPercent * 0.07, 3.2, 7.5);
-  }
-  const pixelWidth = (widthPercent / 100) * (els.image.getBoundingClientRect().width || 1);
-  return clamp(pixelWidth / calibration.pixelsPerMeter, 2.8, 10);
-}
-
-function estimateRoomDepthMeters(analysis, calibration) {
-  const floor = analysis.floorPolygon || [];
-  const nearLeft = floor[3];
-  const farLeft = floor[0];
-  if (!nearLeft || !farLeft) {
-    return 5.4;
-  }
-  const heightPercent = Math.abs(nearLeft.y - farLeft.y);
-  if (!calibration) {
-    return clamp(heightPercent * 0.09, 3.5, 9);
-  }
-  const pixelDepth = (heightPercent / 100) * getDisplayedImageHeight();
-  return clamp((pixelDepth / calibration.pixelsPerMeter) * 1.8, 3, 12);
-}
-
-function estimateRoomHeightMeters(calibration) {
-  if (calibration?.label.toLowerCase().includes("door")) {
-    return clamp(calibration.realHeightMeters * 1.18, 2.3, 3.6);
-  }
-  if (calibration) {
-    return clamp(calibration.realHeightMeters * 1.45, 2.2, 4);
-  }
-  return 2.7;
-}
-
 function polygonPoints(points) {
   if (!points.length) {
     return "";
@@ -1253,127 +1303,7 @@ function average(values) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-function groupOccupiedColumns(occupiedColumns, imageWidth, horizonRow, imageHeight) {
-  const groups = [];
-  let start = -1;
-
-  for (let index = 0; index <= occupiedColumns.length; index += 1) {
-    const occupied = index < occupiedColumns.length ? occupiedColumns[index] : false;
-    if (occupied && start === -1) {
-      start = index;
-      continue;
-    }
-    if (!occupied && start !== -1) {
-      groups.push({ start, end: index - 1 });
-      start = -1;
-    }
-  }
-
-  return groups
-    .filter((group) => group.end - group.start >= Math.max(3, Math.round(imageWidth * 0.06)))
-    .slice(0, 3)
-    .map((group, index) => ({
-      name: `occupied zone ${index + 1}`,
-      x: clamp((group.start / imageWidth) * 100, 0, 100),
-      y: clamp((horizonRow / imageHeight) * 100, 0, 100),
-      width: clamp(((group.end - group.start + 1) / imageWidth) * 100, 4, 100),
-      height: clamp(((imageHeight - horizonRow) / imageHeight) * 100, 8, 100),
-    }));
-}
-
-function findHorizonRow(rowBrightness, rowGradients) {
-  const start = Math.max(4, Math.floor(rowBrightness.length * 0.28));
-  const end = Math.min(rowBrightness.length - 4, Math.floor(rowBrightness.length * 0.78));
-  let bestIndex = Math.floor(rowBrightness.length * 0.58);
-  let bestScore = -Infinity;
-
-  for (let row = start; row <= end; row += 1) {
-    const contrast = rowGradients[row] || 0;
-    const below = average(rowBrightness.slice(row, Math.min(rowBrightness.length, row + 6)));
-    const above = average(rowBrightness.slice(Math.max(0, row - 6), row));
-    const lowerWeight = row / rowBrightness.length;
-    const score = contrast + Math.max(0, below - above) * 0.35 + lowerWeight * 8;
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestIndex = row;
-    }
-  }
-
-  return bestIndex;
-}
-
-function describeLighting(overallBrightness) {
-  if (overallBrightness >= 190) {
-    return "bright daylight";
-  }
-  if (overallBrightness >= 145) {
-    return "balanced ambient light";
-  }
-  if (overallBrightness >= 105) {
-    return "soft interior light";
-  }
-  return "dim interior light";
-}
-
-function describeRoomType(imageWidth, imageHeight, avoidZones) {
-  const aspectRatio = imageWidth / imageHeight;
-  if (aspectRatio >= 1.45) {
-    return "wide living area";
-  }
-  if (avoidZones.length >= 2) {
-    return "furnished bedroom or lounge";
-  }
-  if (aspectRatio <= 0.9) {
-    return "compact bedroom";
-  }
-  return "multi-purpose interior room";
-}
-
-function describeCameraView(imageWidth, imageHeight, horizonRow) {
-  const aspectRatio = imageWidth / imageHeight;
-  const horizonPercent = (horizonRow / imageHeight) * 100;
-
-  if (aspectRatio >= 1.4 && horizonPercent >= 50) {
-    return "eye-level wide shot";
-  }
-  if (aspectRatio <= 0.9) {
-    return "upright phone capture";
-  }
-  if (horizonPercent < 45) {
-    return "slightly elevated angle";
-  }
-  return "straight-on interior view";
-}
-
-function buildPlacementGuidance(avoidZones, dominantSide, horizonPercent) {
-  const guidance = [];
-
-  guidance.push("Place furniture only on the detected horizontal floor plane.");
-  guidance.push("Keep larger items inside the floor polygon and upright against visible walls.");
-
-  if (avoidZones.length) {
-    guidance.push("Avoid overlap with the detected occupied zones while preserving a clear path.");
-  } else {
-    guidance.push("The room appears open enough for a primary anchor piece near the back wall.");
-  }
-
-  if (dominantSide === "left") {
-    guidance.push("The left side reads heavier, so bias new placements slightly to the right.");
-  } else if (dominantSide === "right") {
-    guidance.push("The right side reads heavier, so bias new placements slightly to the left.");
-  }
-
-  if (horizonPercent >= 60) {
-    guidance.push("Favor lower-foreground placements because the visible floor depth is shallow.");
-  } else {
-    guidance.push("Use mid-depth placements to maintain believable perspective.");
-  }
-
-  return guidance;
-}
-
-async function analyzeRoomImageDataUrl(roomImageDataUrl) {
+async function extractImageAnalysisPayload(roomImageDataUrl) {
   if (!roomImageDataUrl) {
     throw new Error("roomImageDataUrl is required");
   }
@@ -1425,62 +1355,45 @@ async function analyzeRoomImageDataUrl(roomImageDataUrl) {
     rowBrightness[row] /= canvas.width;
   }
 
-  const rowGradients = rowBrightness.map((value, row) => {
-    if (row === 0) {
-      return 0;
-    }
-    return Math.abs(value - rowBrightness[row - 1]);
-  });
-
-  const horizonRow = findHorizonRow(rowBrightness, rowGradients);
-  const horizonPercent = (horizonRow / canvas.height) * 100;
-  const leftEnergy = average(columnEnergy.slice(0, Math.floor(canvas.width / 2)));
-  const rightEnergy = average(columnEnergy.slice(Math.floor(canvas.width / 2)));
-  const dominantSide = leftEnergy > rightEnergy * 1.1 ? "left" : rightEnergy > leftEnergy * 1.1 ? "right" : "center";
-  const energyAverage = average(columnEnergy);
-  const occupiedColumns = columnEnergy.map((value, index) => {
-    const lowerBand = index > canvas.width * 0.08 && index < canvas.width * 0.92;
-    return lowerBand && value > energyAverage * 1.55;
-  });
-
-  const avoidZones = groupOccupiedColumns(occupiedColumns, canvas.width, horizonRow, canvas.height);
-  const leftInset = dominantSide === "left" ? 18 : 12;
-  const rightInset = dominantSide === "right" ? 18 : 12;
-  const floorPolygon = [
-    { x: leftInset, y: clamp(horizonPercent + 2, 20, 92) },
-    { x: 100 - rightInset, y: clamp(horizonPercent + 2, 20, 92) },
-    { x: 96, y: 100 },
-    { x: 4, y: 100 },
-  ];
-  const wallTop = 4;
-  const wallHeight = clamp(horizonPercent - wallTop, 12, 70);
-  const wallZones = [
-    { name: "left wall", x: 0, y: wallTop, width: 24, height: wallHeight },
-    { name: "back wall", x: 24, y: wallTop, width: 52, height: wallHeight },
-    { name: "right wall", x: 76, y: wallTop, width: 24, height: wallHeight },
-  ];
-
-  const roomType = describeRoomType(imageWidth, imageHeight, avoidZones);
-  const cameraView = describeCameraView(imageWidth, imageHeight, horizonRow);
-  const lighting = describeLighting(overallBrightness);
-  const placementGuidance = buildPlacementGuidance(avoidZones, dominantSide, horizonPercent);
-  const summary = avoidZones.length
-    ? `Detected a ${roomType} with ${avoidZones.length} occupied floor zone${avoidZones.length > 1 ? "s" : ""} and a usable floor plane.`
-    : `Detected a ${roomType} with a mostly open floor plane and a visible back wall.`;
-
   return {
-    summary,
-    roomType,
-    cameraView,
-    floorPolygon,
-    wallZones,
-    avoidZones,
-    placementGuidance,
-    lighting,
-    model: "local-browser-surface-v1",
-    dominantSide,
-    horizonPercent,
+    imageWidth: canvas.width,
+    imageHeight: canvas.height,
+    rowBrightness,
+    columnEnergy,
+    overallBrightness,
   };
+}
+
+async function requestRoomModel(analysisInput, calibration) {
+  const response = await fetch("/api/model-room", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...analysisInput,
+      calibration: calibration
+        ? {
+            label: calibration.label,
+            realHeightMeters: calibration.realHeightMeters,
+            pixelsPerMeter: calibration.pixelsPerMeter,
+          }
+        : null,
+    }),
+  });
+
+  if (!response.ok) {
+    let message = `Request failed with status ${response.status}`;
+    try {
+      const payload = await response.json();
+      if (payload?.error) {
+        message = payload.error;
+      }
+    } catch {
+      // Keep default message.
+    }
+    throw new Error(message);
+  }
+
+  return response.json();
 }
 
 function loadImage(src) {

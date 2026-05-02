@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Chidar AR Staging</title>
+    <title>Chidar Room Modeler</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -17,7 +17,7 @@
       <header class="topbar">
         <div class="brand-lockup">
           <p class="eyebrow">Chidar</p>
-          <h1>AR furniture staging workflow</h1>
+          <h1>3D room model generation</h1>
         </div>
         <div class="topbar-chips">
           <span id="status-badge" class="tag">Idle</span>
@@ -28,16 +28,16 @@
 
       <section class="hero-card">
         <div class="hero-copy">
-          <p class="eyebrow">MVP Framework</p>
-          <h2>Scan the room, detect the floor plane, place true-scale furniture, and persist the staged scene.</h2>
+          <p class="eyebrow">Room Modeling</p>
+          <h2>Scan the room image, estimate the floor and walls, and export a usable 3D room model.</h2>
           <p class="lede">
-            This browser build follows the AR staging design: deterministic placement rules, a lightweight catalog, direct manipulation, and local scene persistence without AI services.
+            This build turns a single room image into a structured room shell with estimated dimensions, walls, occupied zones, and exportable 3D geometry.
           </p>
         </div>
         <div class="hero-metrics">
           <div class="hero-metric">
             <strong>Core flow</strong>
-            <span>Scan -> detect -> place -> adjust -> save</span>
+            <span>Upload -> detect -> calibrate -> model -> export</span>
           </div>
         </div>
       </section>
@@ -51,13 +51,13 @@
 
             <label class="upload-card" for="room-upload">
               <span class="upload-title">Upload room image</span>
-              <span class="upload-copy">Use an original room photo to simulate the scan and surface-detection step</span>
+              <span class="upload-copy">Use an original room photo to estimate floor, walls, depth, and occupied zones</span>
               <input id="room-upload" type="file" accept=".heic,.heif,image/heic,image/heif,image/*" />
             </label>
 
             <div class="controls primary-controls">
               <button id="analyze-button" class="primary-button" type="button" disabled>
-                Detect Surfaces
+                Generate Room Model
               </button>
               <button id="reset-button" class="ghost-button" type="button">
                 Reset
@@ -85,7 +85,7 @@
               <span id="calibration-badge" class="tag muted">Uncalibrated</span>
             </summary>
             <p class="helper-copy">
-              Mark the top and bottom of a known object in the photo, then enter its real height to set placement scale.
+              Mark the top and bottom of a known object in the photo, then enter its real height to improve room scale.
             </p>
             <div class="calibration-form">
               <label>
@@ -104,26 +104,26 @@
 
           <details class="panel info-panel" open>
             <summary class="section-heading panel-toggle">
-              <h2>Catalog</h2>
+              <h2>Model contents</h2>
             </summary>
             <div id="catalog-panel" class="catalog-panel"></div>
           </details>
 
           <details class="panel info-panel" open>
             <summary class="section-heading panel-toggle">
-              <h2>Scene actions</h2>
+              <h2>Saved models</h2>
             </summary>
             <div class="controls scene-actions">
-              <button id="save-scene" class="ghost-button" type="button" disabled>Save Scene</button>
-              <button id="load-scene" class="ghost-button" type="button" disabled>Load Scene</button>
-              <button id="clear-scene" class="ghost-button" type="button" disabled>Clear Placements</button>
+              <button id="save-scene" class="ghost-button" type="button" disabled>Save Model</button>
+              <button id="load-scene" class="ghost-button" type="button" disabled>Load Model</button>
+              <button id="clear-scene" class="ghost-button" type="button" disabled>Clear Staging</button>
             </div>
             <div id="scene-library" class="summary-panel">No saved scenes yet.</div>
           </details>
 
           <details class="panel info-panel" open>
             <summary class="section-heading panel-toggle">
-              <h2>Placement guidance</h2>
+              <h2>Model guidance</h2>
             </summary>
             <ul id="guidance-list" class="guidance-list">
               <li>No guidance yet.</li>
@@ -144,13 +144,13 @@
           <details class="viewer-card stage-card" open>
             <summary class="workspace-header panel-toggle">
               <div>
-                <p class="eyebrow">AR Stage</p>
-                <h2>Detected floor plane, occupied zones, calibration anchors, and staged furniture</h2>
+                <p class="eyebrow">Room Scan</p>
+                <h2>Detected floor polygon, wall zones, occupied regions, and calibration anchors</h2>
               </div>
             </summary>
 
             <div id="drop-hint" class="drop-hint">
-              Upload a room image to start the scan simulation.
+              Upload a room image to generate the room model.
             </div>
             <div id="viewer" class="viewer" hidden>
               <img id="room-image" class="room-image" alt="Uploaded room" />
@@ -162,7 +162,7 @@
             <summary class="panel-header panel-toggle">
               <div>
                 <p class="eyebrow">Preview</p>
-                <h2>Staged room model</h2>
+                <h2>Estimated 3D room model</h2>
               </div>
             </summary>
 
@@ -192,7 +192,7 @@
             </div>
 
             <canvas id="model-canvas" class="model-canvas" width="1200" height="780"></canvas>
-            <pre id="scene-output" class="scene-output">No scene model yet.</pre>
+            <pre id="scene-output" class="scene-output">No room model yet.</pre>
           </details>
         </main>
       </div>
