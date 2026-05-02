@@ -1,11 +1,18 @@
 const state = {
   roomImageDataUrl: "",
+  sourceFile: null,
+  sourceFileInfo: null,
   analysis: null,
   analyzing: false,
   calibrationMode: false,
   calibrationPoints: [],
   scaleCalibration: null,
   roomModel: null,
+  view: {
+    yaw: -18,
+    pitch: 34,
+    zoom: 100,
+  },
 };
 
 const els = {
@@ -23,9 +30,17 @@ const els = {
   statusBadge: document.querySelector("#status-badge"),
   calibrationBadge: document.querySelector("#calibration-badge"),
   modelBadge: document.querySelector("#model-badge"),
+  fileBadge: document.querySelector("#file-badge"),
+  filePanel: document.querySelector("#file-panel"),
   summaryPanel: document.querySelector("#summary-panel"),
   guidanceList: document.querySelector("#guidance-list"),
   modelCanvas: document.querySelector("#model-canvas"),
+  yawControl: document.querySelector("#yaw-control"),
+  pitchControl: document.querySelector("#pitch-control"),
+  zoomControl: document.querySelector("#zoom-control"),
+  exportJson: document.querySelector("#export-json"),
+  exportObj: document.querySelector("#export-obj"),
+  sceneOutput: document.querySelector("#scene-output"),
 };
 
 attachEvents();
@@ -38,6 +53,11 @@ function attachEvents() {
   els.toggleOverlay.addEventListener("change", renderOverlay);
   els.startCalibration.addEventListener("click", beginCalibration);
   els.overlay.addEventListener("click", handleOverlayClick);
+  els.yawControl.addEventListener("input", handleViewChange);
+  els.pitchControl.addEventListener("input", handleViewChange);
+  els.zoomControl.addEventListener("input", handleViewChange);
+  els.exportJson.addEventListener("click", exportSceneJson);
+  els.exportObj.addEventListener("click", exportSceneObj);
 }
 
 async function handleUpload(event) {
@@ -46,7 +66,11 @@ async function handleUpload(event) {
     return;
   }
 
-  state.roomImageDataUrl = await readFileAsDataUrl(file);
+  const preview = await createPreviewUrl(file);
+  const fileInfo = await inspectSourceFile(file);
+  state.sourceFile = file;
+  state.sourceFileInfo = fileInfo;
+  state.roomImageDataUrl = preview;
   state.analysis = null;
   state.roomModel = null;
   state.scaleCalibration = null;
@@ -88,6 +112,8 @@ async function analyzeCurrentRoom() {
 
 function resetState() {
   state.roomImageDataUrl = "";
+  state.sourceFile = null;
+  state.sourceFileInfo = null;
   state.analysis = null;
   state.analyzing = false;
   state.calibrationMode = false;
@@ -105,31 +131,40 @@ function render() {
 
   els.analyzeButton.disabled = !hasImage || state.analyzing;
   els.startCalibration.disabled = !hasImage;
+  els.exportJson.disabled = !state.roomModel;
+  els.exportObj.disabled = !state.roomModel;
   els.statusBadge.textContent = state.analyzing ? "Analyzing" : hasAnalysis ? "Mapped" : hasImage ? "Ready" : "Idle";
   els.calibrationBadge.textContent = state.scaleCalibration ? "Calibrated" : state.calibrationMode ? "Select points" : "Uncalibrated";
-  els.modelBadge.textContent = state.roomModel ? "Model ready" : hasAnalysis ? "Needs calibration" : "Waiting for analysis";
+  els.modelBadge.textContent = state.roomModel ? "Usable scene" : hasAnalysis ? "Needs calibration" : "Waiting for analysis";
+  els.fileBadge.textContent = state.sourceFileInfo ? state.sourceFileInfo.kindLabel : "No file";
   els.dropHint.hidden = hasImage;
   els.viewer.hidden = !hasImage;
 
   if (!hasImage) {
+    renderFilePanel();
     els.summaryPanel.textContent = "Upload an image to begin.";
     els.guidanceList.innerHTML = "<li>No guidance yet.</li>";
     els.overlay.innerHTML = "";
+    els.sceneOutput.textContent = "No scene model yet.";
     renderModelCanvas();
     return;
   }
 
   if (!hasAnalysis) {
+    renderFilePanel();
     els.summaryPanel.innerHTML = '<div class="metric"><strong>Image loaded</strong>Run the analyzer to generate floor, wall, and occupied-zone estimates.</div>';
     els.guidanceList.innerHTML = "<li>Analyze the uploaded room to generate placement guidance.</li>";
     els.overlay.innerHTML = "";
+    els.sceneOutput.textContent = "Analyze the image to generate a room scene payload.";
     renderModelCanvas();
     return;
   }
 
+  renderFilePanel();
   renderSummary();
   renderGuidance();
   renderOverlay();
+  renderSceneOutput();
   renderModelCanvas();
 }
 
@@ -159,6 +194,37 @@ function renderSummary() {
     <div class="metric">
       <strong>Scale</strong>
       ${escapeHtml(formatScaleSummary())}
+    </div>
+  `;
+}
+
+function renderFilePanel() {
+  const info = state.sourceFileInfo;
+  if (!info) {
+    els.filePanel.textContent = "Upload an original iPhone HEIC file to inspect depth-related metadata.";
+    return;
+  }
+
+  els.filePanel.innerHTML = `
+    <div class="metric">
+      <strong>Filename</strong>
+      ${escapeHtml(info.name)}
+    </div>
+    <div class="metric">
+      <strong>Format</strong>
+      <code>${escapeHtml(info.kindLabel)}</code>
+    </div>
+    <div class="metric">
+      <strong>Size</strong>
+      ${escapeHtml(formatBytes(info.sizeBytes))}
+    </div>
+    <div class="metric">
+      <strong>Depth hint</strong>
+      ${escapeHtml(info.depthStatus)}
+    </div>
+    <div class="metric">
+      <strong>Embedded signals</strong>
+      ${escapeHtml(info.signals.length ? info.signals.join(", ") : "No depth/disparity signatures detected in browser scan.")}
     </div>
   `;
 }
@@ -301,6 +367,100 @@ function formatScaleSummary() {
   return `${state.scaleCalibration.label}: ${state.scaleCalibration.realHeightMeters.toFixed(2)}m (${pixelsPerMeter} px/m).`;
 }
 
+async function createPreviewUrl(file) {
+  const objectUrl = URL.createObjectURL(file);
+
+  try {
+    await loadImage(objectUrl);
+    return objectUrl;
+  } catch (error) {
+    URL.revokeObjectURL(objectUrl);
+    return readFileAsDataUrl(file);
+  }
+}
+
+async function inspectSourceFile(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const ascii = extractAsciiWindow(bytes, 256000);
+  const extension = getFileExtension(file.name);
+  const isHeicLike =
+    file.type.includes("heic") ||
+    file.type.includes("heif") ||
+    extension === "heic" ||
+    extension === "heif";
+  const signals = detectHeicSignals(ascii);
+
+  return {
+    name: file.name,
+    sizeBytes: file.size,
+    mimeType: file.type || "unknown",
+    extension,
+    isHeicLike,
+    kindLabel: isHeicLike ? "HEIC/HEIF" : file.type || extension || "image",
+    depthStatus: summarizeDepthSignals(isHeicLike, signals),
+    signals,
+  };
+}
+
+function extractAsciiWindow(bytes, maxBytes) {
+  const length = Math.min(bytes.length, maxBytes);
+  let text = "";
+  for (let index = 0; index < length; index += 1) {
+    const value = bytes[index];
+    text += value >= 32 && value <= 126 ? String.fromCharCode(value) : " ";
+  }
+  return text;
+}
+
+function detectHeicSignals(ascii) {
+  const signatures = [
+    { pattern: "ftypheic", label: "heic-container" },
+    { pattern: "ftypheix", label: "heic-container" },
+    { pattern: "public.heic", label: "public.heic" },
+    { pattern: "depth", label: "depth" },
+    { pattern: "disparity", label: "disparity" },
+    { pattern: "portrait", label: "portrait" },
+    { pattern: "hdep", label: "depth-float16" },
+    { pattern: "fdep", label: "depth-float32" },
+    { pattern: "hdis", label: "disparity-float16" },
+    { pattern: "fdis", label: "disparity-float32" },
+    { pattern: "aux", label: "auxiliary-data" },
+  ];
+
+  return signatures
+    .filter((signature) => ascii.toLowerCase().includes(signature.pattern.toLowerCase()))
+    .map((signature) => signature.label)
+    .filter((label, index, array) => array.indexOf(label) === index);
+}
+
+function summarizeDepthSignals(isHeicLike, signals) {
+  if (!isHeicLike) {
+    return "Non-HEIC image. Chidar will use RGB-only reconstruction.";
+  }
+  if (signals.some((signal) => signal.includes("depth")) || signals.includes("disparity")) {
+    return "Possible depth/disparity payload detected. Browser path preserves the original file for future extraction.";
+  }
+  if (signals.includes("portrait") || signals.includes("auxiliary-data")) {
+    return "Possible auxiliary image payload detected, but browser-side depth extraction is not confirmed yet.";
+  }
+  return "HEIC preserved, but no clear depth/disparity signature was found in the browser scan.";
+}
+
+function getFileExtension(name) {
+  const parts = String(name).toLowerCase().split(".");
+  return parts.length > 1 ? parts.at(-1) : "";
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 B";
+  }
+  const units = ["B", "KB", "MB", "GB"];
+  const power = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** power;
+  return `${value.toFixed(value >= 10 || power === 0 ? 0 : 1)} ${units[power]}`;
+}
+
 function renderModelCanvas() {
   const canvas = els.modelCanvas;
   const context = canvas.getContext("2d");
@@ -326,7 +486,7 @@ function renderModelCanvas() {
     return;
   }
 
-  drawRoomModel(context, width, height, state.roomModel);
+  drawRoomModel(context, width, height, state.roomModel, state.view);
 }
 
 function drawModelBackground(context, width, height) {
@@ -368,12 +528,15 @@ function wrapCanvasText(context, text, x, y, maxWidth, lineHeight) {
   }
 }
 
-function drawRoomModel(context, width, height, model) {
+function drawRoomModel(context, width, height, model, view) {
   const camera = {
     x: width * 0.5,
     y: height * 0.72,
-    scale: Math.min(width, height) * 0.12 / Math.max(model.width, model.depth, model.height),
-    pitch: 0.52,
+    scale:
+      (Math.min(width, height) * 0.12 * (view.zoom / 100)) /
+      Math.max(model.width, model.depth, model.height),
+    pitch: Number(view.pitch) / 100,
+    yaw: (Number(view.yaw) * Math.PI) / 180,
   };
 
   const floor = [
@@ -471,10 +634,14 @@ function drawLine(context, start, end) {
 }
 
 function projectPoint(x, y, z, camera) {
-  const isoX = (x - z) * 0.86;
-  const isoY = (x + z) * camera.pitch - y * 1.28;
+  const centerX = x;
+  const centerZ = z;
+  const rotatedX = centerX * Math.cos(camera.yaw) - centerZ * Math.sin(camera.yaw);
+  const rotatedZ = centerX * Math.sin(camera.yaw) + centerZ * Math.cos(camera.yaw);
+  const isoX = rotatedX - rotatedZ;
+  const isoY = (rotatedX + rotatedZ) * camera.pitch - y * 1.28;
   return {
-    x: camera.x + isoX * camera.scale,
+    x: camera.x + isoX * 0.86 * camera.scale,
     y: camera.y - isoY * camera.scale,
   };
 }
@@ -501,7 +668,143 @@ function buildRoomModel(analysis, calibration) {
     depth: roomDepth,
     height: roomHeight,
     objects,
+    walls: [
+      { name: "left wall", width: roomDepth, height: roomHeight },
+      { name: "back wall", width: roomWidth, height: roomHeight },
+      { name: "right wall", width: roomDepth, height: roomHeight },
+    ],
   };
+}
+
+function handleViewChange() {
+  state.view.yaw = Number(els.yawControl.value);
+  state.view.pitch = Number(els.pitchControl.value);
+  state.view.zoom = Number(els.zoomControl.value);
+  renderModelCanvas();
+}
+
+function renderSceneOutput() {
+  if (!state.roomModel || !state.analysis) {
+    els.sceneOutput.textContent = "No scene model yet.";
+    return;
+  }
+
+  const payload = buildScenePayload();
+  els.sceneOutput.textContent = JSON.stringify(payload, null, 2);
+}
+
+function buildScenePayload() {
+  return {
+    units: "meters",
+    source: "single-image reconstruction",
+    sourceFile: state.sourceFileInfo
+      ? {
+          name: state.sourceFileInfo.name,
+          format: state.sourceFileInfo.kindLabel,
+          mimeType: state.sourceFileInfo.mimeType,
+          sizeBytes: state.sourceFileInfo.sizeBytes,
+          depthStatus: state.sourceFileInfo.depthStatus,
+          signals: state.sourceFileInfo.signals,
+        }
+      : null,
+    calibration: state.scaleCalibration
+      ? {
+          label: state.scaleCalibration.label,
+          realHeightMeters: state.scaleCalibration.realHeightMeters,
+          pixelsPerMeter: Number(state.scaleCalibration.pixelsPerMeter.toFixed(2)),
+        }
+      : null,
+    analysis: {
+      summary: state.analysis.summary,
+      roomType: state.analysis.roomType,
+      cameraView: state.analysis.cameraView,
+      lighting: state.analysis.lighting,
+    },
+    room: {
+      width: Number(state.roomModel.width.toFixed(3)),
+      depth: Number(state.roomModel.depth.toFixed(3)),
+      height: Number(state.roomModel.height.toFixed(3)),
+    },
+    floorPolygon: (state.analysis.floorPolygon || []).map((point) => ({
+      x: Number(point.x.toFixed(3)),
+      y: Number(point.y.toFixed(3)),
+    })),
+    walls: state.roomModel.walls,
+    objects: state.roomModel.objects.map((object) => ({
+      name: object.name,
+      x: Number(object.x.toFixed(3)),
+      z: Number(object.z.toFixed(3)),
+      width: Number(object.width.toFixed(3)),
+      depth: Number(object.depth.toFixed(3)),
+      height: Number(object.height.toFixed(3)),
+    })),
+  };
+}
+
+function exportSceneJson() {
+  if (!state.roomModel) {
+    return;
+  }
+  downloadFile("chidar-room-model.json", JSON.stringify(buildScenePayload(), null, 2), "application/json");
+}
+
+function exportSceneObj() {
+  if (!state.roomModel) {
+    return;
+  }
+  downloadFile("chidar-room-model.obj", buildObjText(state.roomModel), "text/plain");
+}
+
+function downloadFile(filename, content, contentType) {
+  const blob = new Blob([content], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function buildObjText(model) {
+  const vertices = [];
+  const faces = [];
+
+  addBox(vertices, faces, 0, 0, 0, model.width, 0.02, model.depth);
+  addBox(vertices, faces, 0, 0, 0, 0.02, model.height, model.depth);
+  addBox(vertices, faces, model.width - 0.02, 0, 0, 0.02, model.height, model.depth);
+  addBox(vertices, faces, 0, 0, model.depth - 0.02, model.width, model.height, 0.02);
+  model.objects.forEach((object) => {
+    addBox(vertices, faces, object.x, 0, object.z, object.width, object.height, object.depth);
+  });
+
+  return [
+    "# Chidar room model",
+    ...vertices.map((vertex) => `v ${vertex.x} ${vertex.y} ${vertex.z}`),
+    ...faces.map((face) => `f ${face.join(" ")}`),
+    "",
+  ].join("\n");
+}
+
+function addBox(vertices, faces, x, y, z, width, height, depth) {
+  const start = vertices.length + 1;
+  vertices.push(
+    { x, y, z },
+    { x: x + width, y, z },
+    { x: x + width, y: y + height, z },
+    { x, y: y + height, z },
+    { x, y, z: z + depth },
+    { x: x + width, y, z: z + depth },
+    { x: x + width, y: y + height, z: z + depth },
+    { x, y: y + height, z: z + depth },
+  );
+  faces.push(
+    [start, start + 1, start + 2, start + 3],
+    [start + 4, start + 5, start + 6, start + 7],
+    [start, start + 1, start + 5, start + 4],
+    [start + 1, start + 2, start + 6, start + 5],
+    [start + 2, start + 3, start + 7, start + 6],
+    [start + 3, start, start + 4, start + 7],
+  );
 }
 
 function estimateRoomWidthMeters(analysis, calibration) {

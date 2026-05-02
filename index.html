@@ -23,9 +23,9 @@
         </p>
 
         <label class="upload-card" for="room-upload">
-          <span class="upload-title">Upload room image</span>
-          <span class="upload-copy">JPG, PNG, or WEBP</span>
-          <input id="room-upload" type="file" accept="image/*" />
+          <span class="upload-title">Upload iPhone room image</span>
+          <span class="upload-copy">Prefer original HEIC or HEIF files from iPhone Camera</span>
+          <input id="room-upload" type="file" accept=".heic,.heif,image/heic,image/heif,image/*" />
         </label>
 
         <div class="controls">
@@ -40,6 +40,16 @@
             <span>Show overlays</span>
           </label>
         </div>
+
+        <section class="info-card">
+          <div class="section-heading">
+            <h2>Source file</h2>
+            <span id="file-badge" class="tag muted">No file</span>
+          </div>
+          <div id="file-panel" class="summary-panel">
+            Upload an original iPhone HEIC file to inspect depth-related metadata.
+          </div>
+        </section>
 
         <section class="info-card">
           <div class="section-heading">
@@ -107,7 +117,30 @@
             <h2>3D room model</h2>
             <span id="model-badge" class="tag muted">Waiting for analysis</span>
           </div>
+          <div class="model-controls">
+            <label>
+              Yaw
+              <input id="yaw-control" type="range" min="-45" max="45" value="-18" />
+            </label>
+            <label>
+              Pitch
+              <input id="pitch-control" type="range" min="20" max="75" value="34" />
+            </label>
+            <label>
+              Zoom
+              <input id="zoom-control" type="range" min="70" max="180" value="100" />
+            </label>
+          </div>
+          <div class="controls export-controls">
+            <button id="export-json" class="ghost-button" type="button" disabled>
+              Export JSON
+            </button>
+            <button id="export-obj" class="ghost-button" type="button" disabled>
+              Export OBJ
+            </button>
+          </div>
           <canvas id="model-canvas" class="model-canvas" width="1200" height="780"></canvas>
+          <pre id="scene-output" class="scene-output">No scene model yet.</pre>
         </section>
       </main>
     </div>
