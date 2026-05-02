@@ -43,6 +43,29 @@
 
         <section class="info-card">
           <div class="section-heading">
+            <h2>Scale calibration</h2>
+            <span id="calibration-badge" class="tag muted">Uncalibrated</span>
+          </div>
+          <p class="helper-copy">
+            Mark the top and bottom of a known object in the photo, then enter its real height.
+          </p>
+          <div class="calibration-form">
+            <label>
+              Known object
+              <input id="reference-label" type="text" value="Door" />
+            </label>
+            <label>
+              Height (meters)
+              <input id="reference-height" type="number" min="0.1" step="0.01" value="2.03" />
+            </label>
+            <button id="start-calibration" class="ghost-button" type="button" disabled>
+              Mark Object Height
+            </button>
+          </div>
+        </section>
+
+        <section class="info-card">
+          <div class="section-heading">
             <h2>Summary</h2>
             <span id="status-badge" class="tag muted">Idle</span>
           </div>
@@ -77,6 +100,14 @@
             <img id="room-image" class="room-image" alt="Uploaded room" />
             <svg id="overlay" class="overlay" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
           </div>
+        </section>
+
+        <section class="viewer-card model-card">
+          <div class="section-heading">
+            <h2>3D room model</h2>
+            <span id="model-badge" class="tag muted">Waiting for analysis</span>
+          </div>
+          <canvas id="model-canvas" class="model-canvas" width="1200" height="780"></canvas>
         </section>
       </main>
     </div>

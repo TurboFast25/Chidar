@@ -155,6 +155,33 @@ button:disabled {
   color: var(--muted);
 }
 
+.helper-copy {
+  margin: 0 0 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.calibration-form {
+  display: grid;
+  gap: 12px;
+}
+
+.calibration-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.calibration-form input {
+  width: 100%;
+  border: 1px solid rgba(33, 29, 24, 0.14);
+  border-radius: 14px;
+  padding: 12px 14px;
+  font: inherit;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.72);
+}
+
 .info-card {
   padding-top: 20px;
   border-top: 1px solid rgba(33, 29, 24, 0.08);
@@ -224,6 +251,11 @@ button:disabled {
   overflow: hidden;
 }
 
+.model-card {
+  min-height: auto;
+  margin-top: 20px;
+}
+
 .drop-hint {
   display: grid;
   place-items: center;
@@ -291,6 +323,36 @@ button:disabled {
   paint-order: stroke;
   stroke: rgba(255, 255, 255, 0.82);
   stroke-width: 0.28px;
+}
+
+.overlay-line {
+  stroke: rgba(184, 92, 56, 0.95);
+  stroke-width: 0.7;
+  stroke-dasharray: 1.4 1;
+}
+
+.overlay-point {
+  fill: #fff8f0;
+  stroke: rgba(184, 92, 56, 0.95);
+  stroke-width: 0.6;
+}
+
+.overlay-note {
+  font-size: 3px;
+  fill: #1c1711;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.88);
+  stroke-width: 0.28px;
+}
+
+.model-canvas {
+  display: block;
+  width: 100%;
+  min-height: 360px;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.92), transparent 35%),
+    linear-gradient(180deg, rgba(253, 250, 245, 0.95), rgba(234, 224, 209, 0.9));
 }
 
 @media (max-width: 980px) {
