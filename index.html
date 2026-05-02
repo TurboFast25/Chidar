@@ -39,26 +39,18 @@
             <strong>Capture format</strong>
             <span>HEIC / HEIF first</span>
           </div>
-          <div class="hero-metric">
-            <strong>Output</strong>
-            <span>JSON and OBJ scene export</span>
-          </div>
-          <div class="hero-metric">
-            <strong>Cost model</strong>
-            <span>Zero API credits</span>
-          </div>
         </div>
       </section>
 
       <div class="app-shell">
         <aside class="control-rail">
-          <section class="panel panel-intro">
-            <div class="panel-header">
+          <details class="panel panel-intro" open>
+            <summary class="panel-header panel-toggle">
               <div>
                 <p class="eyebrow">Input</p>
                 <h2>Source capture</h2>
               </div>
-            </div>
+            </summary>
 
             <label class="upload-card" for="room-upload">
               <span class="upload-title">Upload iPhone room image</span>
@@ -79,22 +71,22 @@
               <input id="toggle-overlay" type="checkbox" checked />
               <span>Show overlays on the source image</span>
             </label>
-          </section>
+          </details>
 
-          <section class="panel info-panel">
-            <div class="section-heading">
+          <details class="panel info-panel" open>
+            <summary class="section-heading panel-toggle">
               <h2>Source file</h2>
-            </div>
+            </summary>
             <div id="file-panel" class="summary-panel">
               Upload an original iPhone HEIC file to inspect depth-related metadata.
             </div>
-          </section>
+          </details>
 
-          <section class="panel info-panel">
-            <div class="section-heading">
+          <details class="panel info-panel" open>
+            <summary class="section-heading panel-toggle">
               <h2>Scale calibration</h2>
               <span id="calibration-badge" class="tag muted">Uncalibrated</span>
-            </div>
+            </summary>
             <p class="helper-copy">
               Mark the top and bottom of a known object in the photo, then enter its real height.
             </p>
@@ -111,35 +103,35 @@
                 Mark Object Height
               </button>
             </div>
-          </section>
+          </details>
 
-          <section class="panel info-panel">
-            <div class="section-heading">
+          <details class="panel info-panel" open>
+            <summary class="section-heading panel-toggle">
               <h2>Summary</h2>
-            </div>
+            </summary>
             <div id="summary-panel" class="summary-panel">
               Upload an image to begin.
             </div>
-          </section>
+          </details>
 
-          <section class="panel info-panel">
-            <div class="section-heading">
+          <details class="panel info-panel" open>
+            <summary class="section-heading panel-toggle">
               <h2>Placement guidance</h2>
-            </div>
+            </summary>
             <ul id="guidance-list" class="guidance-list">
               <li>No guidance yet.</li>
             </ul>
-          </section>
+          </details>
         </aside>
 
         <main class="workspace">
-          <section class="viewer-card stage-card">
-            <div class="workspace-header">
+          <details class="viewer-card stage-card" open>
+            <summary class="workspace-header panel-toggle">
               <div>
                 <p class="eyebrow">Scene Map</p>
                 <h2>Detected floor, walls, occupied zones, and calibration anchors</h2>
               </div>
-            </div>
+            </summary>
 
             <div id="drop-hint" class="drop-hint">
               Upload a room image to generate a local analysis.
@@ -148,15 +140,15 @@
               <img id="room-image" class="room-image" alt="Uploaded room" />
               <svg id="overlay" class="overlay" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
             </div>
-          </section>
+          </details>
 
-          <section class="viewer-card model-card">
-            <div class="panel-header">
+          <details class="viewer-card model-card" open>
+            <summary class="panel-header panel-toggle">
               <div>
                 <p class="eyebrow">Model</p>
                 <h2>3D room scene</h2>
               </div>
-            </div>
+            </summary>
 
             <div class="model-toolbar">
               <div class="model-controls">
@@ -185,7 +177,7 @@
 
             <canvas id="model-canvas" class="model-canvas" width="1200" height="780"></canvas>
             <pre id="scene-output" class="scene-output">No scene model yet.</pre>
-          </section>
+          </details>
         </main>
       </div>
     </div>
