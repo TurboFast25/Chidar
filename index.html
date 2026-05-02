@@ -31,13 +31,13 @@
           <p class="eyebrow">Room Modeling</p>
           <h2>Scan the room image, estimate the floor and walls, and export a usable 3D room model.</h2>
           <p class="lede">
-            This build turns a single room image into a structured room shell with estimated dimensions, walls, occupied zones, and exportable 3D geometry.
+            Upload a HEIC or room image to instantly generate a 3D room shell with estimated dimensions, walls, occupied zones, and exportable geometry. Optionally refine with server-side analysis.
           </p>
         </div>
         <div class="hero-metrics">
           <div class="hero-metric">
             <strong>Core flow</strong>
-            <span>Upload -> detect -> calibrate -> model -> export</span>
+            <span>Upload -> instant 3D model -> calibrate -> refine -> export</span>
           </div>
         </div>
       </section>
@@ -57,7 +57,7 @@
 
             <div class="controls primary-controls">
               <button id="analyze-button" class="primary-button" type="button" disabled>
-                Generate Room Model
+                Refine with Server Analysis
               </button>
               <button id="reset-button" class="ghost-button" type="button">
                 Reset
@@ -150,7 +150,7 @@
             </summary>
 
             <div id="drop-hint" class="drop-hint">
-              Upload a room image to generate the room model.
+              Upload a room image to instantly generate the 3D room model.
             </div>
             <div id="viewer" class="viewer" hidden>
               <img id="room-image" class="room-image" alt="Uploaded room" />

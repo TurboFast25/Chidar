@@ -112,6 +112,21 @@ async function handleUpload(event) {
   state.stagedItems = [];
   state.selectedItemId = null;
   els.image.src = state.roomImageDataUrl;
+
+  // Immediately generate the 3D room model from the image data (no server call)
+  try {
+    state.analysisInput = await extractImageAnalysisPayload(state.roomImageDataUrl);
+    const result = analyzeRoomLocally(state.analysisInput, state.scaleCalibration);
+    state.analysis = result.analysis;
+    state.baseRoomModel = result.roomModel;
+    rebuildRoomModel();
+  } catch (error) {
+    // If local analysis fails, leave model empty — user can still run server analysis
+    state.analysis = null;
+    state.baseRoomModel = null;
+    state.roomModel = null;
+  }
+
   render();
 }
 
@@ -124,28 +139,32 @@ async function analyzeCurrentRoom() {
   render();
 
   try {
-    state.analysisInput = await extractImageAnalysisPayload(state.roomImageDataUrl);
+    if (!state.analysisInput) {
+      state.analysisInput = await extractImageAnalysisPayload(state.roomImageDataUrl);
+    }
     const response = await requestRoomModel(state.analysisInput, state.scaleCalibration);
     state.analysis = response.analysis;
     state.baseRoomModel = response.roomModel;
     rebuildRoomModel();
   } catch (error) {
-    state.analysisInput = null;
-    state.analysis = {
-      summary: `Surface detection failed: ${error.message}`,
-      roomType: "",
-      cameraView: "",
-      floorPolygon: [],
-      wallZones: [],
-      avoidZones: [],
-      placementGuidance: [],
-      lighting: "",
-      model: "",
-      dominantSide: "center",
-      horizonPercent: 58,
-    };
-    state.baseRoomModel = null;
-    state.roomModel = null;
+    // If server analysis fails, fall back to local analysis if we don't already have one
+    if (!state.analysis) {
+      state.analysis = {
+        summary: `Server analysis failed: ${error.message}. Using local estimate.`,
+        roomType: "",
+        cameraView: "",
+        floorPolygon: [],
+        wallZones: [],
+        avoidZones: [],
+        placementGuidance: [],
+        lighting: "",
+        model: "",
+        dominantSide: "center",
+        horizonPercent: 58,
+      };
+      state.baseRoomModel = null;
+      state.roomModel = null;
+    }
   } finally {
     state.analyzing = false;
     render();
@@ -180,13 +199,14 @@ function render() {
   const hasWorkspaceData = hasImage || hasAnalysis;
 
   els.analyzeButton.disabled = !hasImage || state.analyzing;
+  els.analyzeButton.textContent = state.analyzing ? "Analyzing…" : hasAnalysis ? "Refine with Server Analysis" : "Generate Room Model";
   els.startCalibration.disabled = !hasImage;
   els.exportJson.disabled = !state.roomModel;
   els.exportObj.disabled = !state.roomModel;
   els.saveScene.disabled = !state.roomModel;
   els.loadScene.disabled = !state.savedScenes.length;
   els.clearScene.disabled = !hasScene;
-  els.statusBadge.textContent = state.analyzing ? "Detecting" : hasAnalysis ? "Surface mapped" : hasImage ? "Ready" : "Idle";
+  els.statusBadge.textContent = state.analyzing ? "Analyzing" : hasAnalysis ? (state.analysis?.model === "client-room-model-v1" ? "Local model" : "Server analyzed") : hasImage ? "Ready" : "Idle";
   els.calibrationBadge.textContent = state.scaleCalibration ? "Calibrated" : state.calibrationMode ? "Select points" : "Uncalibrated";
   els.modelBadge.textContent = state.roomModel ? `${state.roomModel.width.toFixed(1)}m x ${state.roomModel.depth.toFixed(1)}m x ${state.roomModel.height.toFixed(1)}m` : hasAnalysis ? "Model estimated" : "Waiting for scan";
   els.fileBadge.textContent = state.sourceFileInfo ? state.sourceFileInfo.kindLabel : "No file";
@@ -207,10 +227,10 @@ function render() {
   }
 
   if (!hasAnalysis) {
-    els.summaryPanel.innerHTML = '<div class="metric"><strong>Scan status</strong>Run room-model generation to estimate the floor polygon, wall zones, and room dimensions.</div>';
-    els.guidanceList.innerHTML = "<li>Generate the room model before exporting JSON or OBJ.</li>";
+    els.summaryPanel.innerHTML = '<div class="metric"><strong>Scan status</strong>Upload a room image to instantly generate the 3D room model. Use server analysis for deeper refinement.</div>';
+    els.guidanceList.innerHTML = "<li>Upload a room image to generate the room model.</li>";
     els.overlay.innerHTML = "";
-    els.sceneOutput.textContent = "Generate the room model to produce an exportable room payload.";
+    els.sceneOutput.textContent = "Upload a room image to produce an exportable room payload.";
     renderModelCanvas();
     return;
   }
@@ -232,7 +252,7 @@ function renderCatalog() {
     els.catalogPanel.innerHTML = `
       <div class="metric">
         <strong>Pending model</strong>
-        Generate the room model to inspect the detected shell, surfaces, and occupied regions.
+        Upload a room image to inspect the detected shell, surfaces, and occupied regions.
       </div>
     `;
     return;
@@ -685,9 +705,16 @@ async function commitCalibration() {
   render();
   try {
     if (state.analysisInput) {
-      const response = await requestRoomModel(state.analysisInput, state.scaleCalibration);
-      state.analysis = response.analysis;
-      state.baseRoomModel = response.roomModel;
+      // Try server-side refinement first, fall back to local re-estimation
+      try {
+        const response = await requestRoomModel(state.analysisInput, state.scaleCalibration);
+        state.analysis = response.analysis;
+        state.baseRoomModel = response.roomModel;
+      } catch {
+        const result = analyzeRoomLocally(state.analysisInput, state.scaleCalibration);
+        state.analysis = result.analysis;
+        state.baseRoomModel = result.roomModel;
+      }
     }
   } catch (error) {
     state.analysis = {
@@ -865,7 +892,7 @@ function renderModelCanvas() {
       height,
       state.analysis
         ? "Room surfaces detected. Export the model or optionally test-fit furniture."
-        : "Generate the room model to estimate the room shell.",
+        : "Upload a room image to generate the 3D room model.",
     );
     return;
   }
@@ -1361,6 +1388,215 @@ async function extractImageAnalysisPayload(roomImageDataUrl) {
     rowBrightness,
     columnEnergy,
     overallBrightness,
+  };
+}
+
+function analyzeRoomLocally(payload, calibration) {
+  const imageWidth = payload.imageWidth;
+  const imageHeight = payload.imageHeight;
+  const rowBrightness = payload.rowBrightness;
+  const columnEnergy = payload.columnEnergy;
+  const overallBrightness = payload.overallBrightness;
+
+  const rowGradients = [0];
+  for (let i = 1; i < rowBrightness.length; i += 1) {
+    rowGradients.push(Math.abs(rowBrightness[i] - rowBrightness[i - 1]));
+  }
+
+  const horizonRow = findHorizonRow(rowBrightness, rowGradients);
+  const horizonPercent = imageHeight ? (horizonRow / imageHeight) * 100 : 58;
+  const halfway = Math.max(1, Math.floor(imageWidth / 2));
+  const leftEnergy = average(columnEnergy.slice(0, halfway));
+  const rightEnergy = average(columnEnergy.slice(halfway));
+  let dominantSide = "center";
+  if (leftEnergy > rightEnergy * 1.1) dominantSide = "left";
+  else if (rightEnergy > leftEnergy * 1.1) dominantSide = "right";
+
+  const energyAverage = average(columnEnergy);
+  const occupiedColumns = columnEnergy.map((value, index) => {
+    const lowerBand = index > imageWidth * 0.08 && index < imageWidth * 0.92;
+    return lowerBand && value > energyAverage * 1.55;
+  });
+
+  const avoidZones = groupOccupiedColumns(occupiedColumns, imageWidth, horizonRow, imageHeight);
+  const leftInset = dominantSide === "left" ? 18 : 12;
+  const rightInset = dominantSide === "right" ? 18 : 12;
+  const floorPolygon = [
+    { x: leftInset, y: clamp(horizonPercent + 2, 20, 92) },
+    { x: 100 - rightInset, y: clamp(horizonPercent + 2, 20, 92) },
+    { x: 96, y: 100 },
+    { x: 4, y: 100 },
+  ];
+  const wallTop = 4;
+  const wallHeight = clamp(horizonPercent - wallTop, 12, 70);
+  const wallZones = [
+    { name: "left wall", x: 0, y: wallTop, width: 24, height: wallHeight },
+    { name: "back wall", x: 24, y: wallTop, width: 52, height: wallHeight },
+    { name: "right wall", x: 76, y: wallTop, width: 24, height: wallHeight },
+  ];
+
+  const roomType = describeRoomType(imageWidth, imageHeight, avoidZones);
+  const summary = avoidZones.length
+    ? `Detected a ${roomType} with ${avoidZones.length} occupied floor zone${avoidZones.length !== 1 ? "s" : ""} and a usable floor plane.`
+    : `Detected a ${roomType} with a mostly open floor plane and a visible back wall.`;
+
+  const analysis = {
+    summary,
+    roomType,
+    cameraView: describeCameraView(imageWidth, imageHeight, horizonRow),
+    floorPolygon,
+    wallZones,
+    avoidZones,
+    placementGuidance: buildModelGuidance(avoidZones, dominantSide, horizonPercent),
+    lighting: describeLighting(overallBrightness),
+    model: "client-room-model-v1",
+    dominantSide,
+    horizonPercent,
+  };
+
+  const roomModel = buildLocalRoomModel(analysis, calibration, imageWidth, imageHeight);
+  return { analysis, roomModel };
+}
+
+function findHorizonRow(rowBrightness, rowGradients) {
+  const start = Math.max(4, Math.floor(rowBrightness.length * 0.28));
+  const end = Math.min(rowBrightness.length - 4, Math.floor(rowBrightness.length * 0.78));
+  let bestIndex = Math.floor(rowBrightness.length * 0.58);
+  let bestScore = -Infinity;
+
+  for (let row = start; row <= end; row += 1) {
+    const contrast = row < rowGradients.length ? rowGradients[row] : 0;
+    const below = average(rowBrightness.slice(row, Math.min(rowBrightness.length, row + 6)));
+    const above = average(rowBrightness.slice(Math.max(0, row - 6), row));
+    const lowerWeight = row / rowBrightness.length;
+    const score = contrast + Math.max(0, below - above) * 0.35 + lowerWeight * 8;
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = row;
+    }
+  }
+  return bestIndex;
+}
+
+function groupOccupiedColumns(occupiedColumns, imageWidth, horizonRow, imageHeight) {
+  const groups = [];
+  let start = -1;
+
+  for (let index = 0; index <= occupiedColumns.length; index += 1) {
+    const occupied = index < occupiedColumns.length ? occupiedColumns[index] : false;
+    if (occupied && start === -1) {
+      start = index;
+      continue;
+    }
+    if (!occupied && start !== -1) {
+      groups.push({ start, end: index - 1 });
+      start = -1;
+    }
+  }
+
+  const minimumSpan = Math.max(3, Math.round(imageWidth * 0.06));
+  const zones = [];
+  for (let gi = 0; gi < groups.length; gi += 1) {
+    const group = groups[gi];
+    if (group.end - group.start < minimumSpan) continue;
+    if (zones.length >= 3) break;
+    zones.push({
+      name: `occupied zone ${gi + 1}`,
+      x: clamp((group.start / imageWidth) * 100, 0, 100),
+      y: clamp((horizonRow / imageHeight) * 100, 0, 100),
+      width: clamp(((group.end - group.start + 1) / imageWidth) * 100, 4, 100),
+      height: clamp(((imageHeight - horizonRow) / imageHeight) * 100, 8, 100),
+    });
+  }
+  return zones;
+}
+
+function describeLighting(overallBrightness) {
+  if (overallBrightness >= 190) return "bright daylight";
+  if (overallBrightness >= 145) return "balanced ambient light";
+  if (overallBrightness >= 105) return "soft interior light";
+  return "dim interior light";
+}
+
+function describeRoomType(imageWidth, imageHeight, avoidZones) {
+  const aspectRatio = imageHeight ? imageWidth / imageHeight : 1;
+  if (aspectRatio >= 1.45) return "wide living area";
+  if (avoidZones.length >= 2) return "furnished bedroom or lounge";
+  if (aspectRatio <= 0.9) return "compact bedroom";
+  return "multi-purpose interior room";
+}
+
+function describeCameraView(imageWidth, imageHeight, horizonRow) {
+  const aspectRatio = imageHeight ? imageWidth / imageHeight : 1;
+  const horizonPercent = imageHeight ? (horizonRow / imageHeight) * 100 : 58;
+  if (aspectRatio >= 1.4 && horizonPercent >= 50) return "eye-level wide shot";
+  if (aspectRatio <= 0.9) return "upright phone capture";
+  if (horizonPercent < 45) return "slightly elevated angle";
+  return "straight-on interior view";
+}
+
+function buildModelGuidance(avoidZones, dominantSide, horizonPercent) {
+  const guidance = [
+    "The model assumes a single dominant horizontal floor plane and a visible back wall.",
+    "Calibrate against a known object height to improve room scale before export.",
+  ];
+  if (avoidZones.length) {
+    guidance.push("Occupied regions were detected and are excluded from the clean floor area estimate.");
+  } else {
+    guidance.push("The floor area appears mostly open, so the room shell estimate is less constrained by obstructions.");
+  }
+  if (dominantSide === "left") {
+    guidance.push("The left side carries more visual mass, which can skew width estimation on that side.");
+  } else if (dominantSide === "right") {
+    guidance.push("The right side carries more visual mass, which can skew width estimation on that side.");
+  }
+  if (horizonPercent >= 60) {
+    guidance.push("Visible floor depth is shallow, so depth estimates are less reliable toward the foreground.");
+  } else {
+    guidance.push("Visible floor depth is moderate, which gives the depth estimate more support.");
+  }
+  return guidance;
+}
+
+function estimateRoomWidthMeters(floorPolygon, calibration, displayWidth) {
+  if (floorPolygon.length < 2) return 4.8;
+  const widthPercent = Math.abs(floorPolygon[1].x - floorPolygon[0].x);
+  if (!calibration) return clamp(widthPercent * 0.07, 3.2, 7.5);
+  const pixelWidth = (widthPercent / 100) * Math.max(displayWidth, 1);
+  return clamp(pixelWidth / calibration.pixelsPerMeter, 2.8, 10);
+}
+
+function estimateRoomDepthMeters(floorPolygon, calibration, displayHeight) {
+  if (floorPolygon.length < 4) return 5.4;
+  const heightPercent = Math.abs(floorPolygon[3].y - floorPolygon[0].y);
+  if (!calibration) return clamp(heightPercent * 0.09, 3.5, 9);
+  const pixelDepth = (heightPercent / 100) * Math.max(displayHeight, 1);
+  return clamp((pixelDepth / calibration.pixelsPerMeter) * 1.8, 3, 12);
+}
+
+function estimateRoomHeightMeters(calibration) {
+  if (calibration && calibration.label.toLowerCase().includes("door")) {
+    return clamp(calibration.realHeightMeters * 1.18, 2.3, 3.6);
+  }
+  if (calibration) return clamp(calibration.realHeightMeters * 1.45, 2.2, 4);
+  return 2.7;
+}
+
+function buildLocalRoomModel(analysis, calibration, displayWidth, displayHeight) {
+  const roomWidth = estimateRoomWidthMeters(analysis.floorPolygon, calibration, displayWidth);
+  const roomDepth = estimateRoomDepthMeters(analysis.floorPolygon, calibration, displayHeight);
+  const roomHeight = estimateRoomHeightMeters(calibration);
+  return {
+    width: roomWidth,
+    depth: roomDepth,
+    height: roomHeight,
+    floorArea: roomWidth * roomDepth,
+    objects: [],
+    walls: [
+      { name: "left wall", width: roomDepth, height: roomHeight },
+      { name: "back wall", width: roomWidth, height: roomHeight },
+      { name: "right wall", width: roomDepth, height: roomHeight },
+    ],
   };
 }
 
