@@ -13,136 +13,181 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="app-shell">
-      <aside class="panel">
-        <p class="eyebrow">Chidar</p>
-        <h1>Local room analyzer</h1>
-        <p class="lede">
-          Upload a room photo and generate a placement map locally in the browser.
-          No API, no credits, no backend inference.
-        </p>
-
-        <label class="upload-card" for="room-upload">
-          <span class="upload-title">Upload iPhone room image</span>
-          <span class="upload-copy">Prefer original HEIC or HEIF files from iPhone Camera</span>
-          <input id="room-upload" type="file" accept=".heic,.heif,image/heic,image/heif,image/*" />
-        </label>
-
-        <div class="controls">
-          <button id="analyze-button" class="primary-button" type="button" disabled>
-            Analyze Room
-          </button>
-          <button id="reset-button" class="ghost-button" type="button">
-            Reset
-          </button>
-          <label class="toggle">
-            <input id="toggle-overlay" type="checkbox" checked />
-            <span>Show overlays</span>
-          </label>
+    <div class="page-shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <p class="eyebrow">Chidar</p>
+          <h1>HEIC room capture to usable 3D scene</h1>
         </div>
+        <div class="topbar-chips">
+          <span id="status-badge" class="tag">Idle</span>
+          <span id="file-badge" class="tag muted">No file</span>
+          <span id="model-badge" class="tag muted">Waiting for analysis</span>
+        </div>
+      </header>
 
-        <section class="info-card">
-          <div class="section-heading">
-            <h2>Source file</h2>
-            <span id="file-badge" class="tag muted">No file</span>
-          </div>
-          <div id="file-panel" class="summary-panel">
-            Upload an original iPhone HEIC file to inspect depth-related metadata.
-          </div>
-        </section>
-
-        <section class="info-card">
-          <div class="section-heading">
-            <h2>Scale calibration</h2>
-            <span id="calibration-badge" class="tag muted">Uncalibrated</span>
-          </div>
-          <p class="helper-copy">
-            Mark the top and bottom of a known object in the photo, then enter its real height.
+      <section class="hero-card">
+        <div class="hero-copy">
+          <p class="eyebrow">Web Workflow</p>
+          <h2>Upload the original iPhone HEIC, inspect depth hints, calibrate once, export a room model.</h2>
+          <p class="lede">
+            Chidar is the free route: browser-first intake, no API calls, and a reconstruction pipeline aimed at turning a single mobile capture into an editable room scene.
           </p>
-          <div class="calibration-form">
-            <label>
-              Known object
-              <input id="reference-label" type="text" value="Door" />
-            </label>
-            <label>
-              Height (meters)
-              <input id="reference-height" type="number" min="0.1" step="0.01" value="2.03" />
-            </label>
-            <button id="start-calibration" class="ghost-button" type="button" disabled>
-              Mark Object Height
-            </button>
+        </div>
+        <div class="hero-metrics">
+          <div class="hero-metric">
+            <strong>Capture format</strong>
+            <span>HEIC / HEIF first</span>
           </div>
-        </section>
-
-        <section class="info-card">
-          <div class="section-heading">
-            <h2>Summary</h2>
-            <span id="status-badge" class="tag muted">Idle</span>
+          <div class="hero-metric">
+            <strong>Output</strong>
+            <span>JSON and OBJ scene export</span>
           </div>
-          <div id="summary-panel" class="summary-panel">
-            Upload an image to begin.
-          </div>
-        </section>
-
-        <section class="info-card">
-          <div class="section-heading">
-            <h2>Placement guidance</h2>
-          </div>
-          <ul id="guidance-list" class="guidance-list">
-            <li>No guidance yet.</li>
-          </ul>
-        </section>
-      </aside>
-
-      <main class="workspace">
-        <div class="workspace-header">
-          <div>
-            <p class="eyebrow">Scene Map</p>
-            <h2>Detected floor, walls, and occupied zones</h2>
+          <div class="hero-metric">
+            <strong>Cost model</strong>
+            <span>Zero API credits</span>
           </div>
         </div>
+      </section>
 
-        <section class="viewer-card">
-          <div id="drop-hint" class="drop-hint">
-            Upload a room image to generate a local analysis.
-          </div>
-          <div id="viewer" class="viewer" hidden>
-            <img id="room-image" class="room-image" alt="Uploaded room" />
-            <svg id="overlay" class="overlay" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
-          </div>
-        </section>
+      <div class="app-shell">
+        <aside class="control-rail">
+          <section class="panel panel-intro">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Input</p>
+                <h2>Source capture</h2>
+              </div>
+            </div>
 
-        <section class="viewer-card model-card">
-          <div class="section-heading">
-            <h2>3D room model</h2>
-            <span id="model-badge" class="tag muted">Waiting for analysis</span>
-          </div>
-          <div class="model-controls">
-            <label>
-              Yaw
-              <input id="yaw-control" type="range" min="-45" max="45" value="-18" />
+            <label class="upload-card" for="room-upload">
+              <span class="upload-title">Upload iPhone room image</span>
+              <span class="upload-copy">Prefer the untouched original HEIC or HEIF from iPhone Camera</span>
+              <input id="room-upload" type="file" accept=".heic,.heif,image/heic,image/heif,image/*" />
             </label>
-            <label>
-              Pitch
-              <input id="pitch-control" type="range" min="20" max="75" value="34" />
+
+            <div class="controls primary-controls">
+              <button id="analyze-button" class="primary-button" type="button" disabled>
+                Analyze Room
+              </button>
+              <button id="reset-button" class="ghost-button" type="button">
+                Reset
+              </button>
+            </div>
+
+            <label class="toggle toggle-surface">
+              <input id="toggle-overlay" type="checkbox" checked />
+              <span>Show overlays on the source image</span>
             </label>
-            <label>
-              Zoom
-              <input id="zoom-control" type="range" min="70" max="180" value="100" />
-            </label>
-          </div>
-          <div class="controls export-controls">
-            <button id="export-json" class="ghost-button" type="button" disabled>
-              Export JSON
-            </button>
-            <button id="export-obj" class="ghost-button" type="button" disabled>
-              Export OBJ
-            </button>
-          </div>
-          <canvas id="model-canvas" class="model-canvas" width="1200" height="780"></canvas>
-          <pre id="scene-output" class="scene-output">No scene model yet.</pre>
-        </section>
-      </main>
+          </section>
+
+          <section class="panel info-panel">
+            <div class="section-heading">
+              <h2>Source file</h2>
+            </div>
+            <div id="file-panel" class="summary-panel">
+              Upload an original iPhone HEIC file to inspect depth-related metadata.
+            </div>
+          </section>
+
+          <section class="panel info-panel">
+            <div class="section-heading">
+              <h2>Scale calibration</h2>
+              <span id="calibration-badge" class="tag muted">Uncalibrated</span>
+            </div>
+            <p class="helper-copy">
+              Mark the top and bottom of a known object in the photo, then enter its real height.
+            </p>
+            <div class="calibration-form">
+              <label>
+                Known object
+                <input id="reference-label" type="text" value="Door" />
+              </label>
+              <label>
+                Height (meters)
+                <input id="reference-height" type="number" min="0.1" step="0.01" value="2.03" />
+              </label>
+              <button id="start-calibration" class="ghost-button" type="button" disabled>
+                Mark Object Height
+              </button>
+            </div>
+          </section>
+
+          <section class="panel info-panel">
+            <div class="section-heading">
+              <h2>Summary</h2>
+            </div>
+            <div id="summary-panel" class="summary-panel">
+              Upload an image to begin.
+            </div>
+          </section>
+
+          <section class="panel info-panel">
+            <div class="section-heading">
+              <h2>Placement guidance</h2>
+            </div>
+            <ul id="guidance-list" class="guidance-list">
+              <li>No guidance yet.</li>
+            </ul>
+          </section>
+        </aside>
+
+        <main class="workspace">
+          <section class="viewer-card stage-card">
+            <div class="workspace-header">
+              <div>
+                <p class="eyebrow">Scene Map</p>
+                <h2>Detected floor, walls, occupied zones, and calibration anchors</h2>
+              </div>
+            </div>
+
+            <div id="drop-hint" class="drop-hint">
+              Upload a room image to generate a local analysis.
+            </div>
+            <div id="viewer" class="viewer" hidden>
+              <img id="room-image" class="room-image" alt="Uploaded room" />
+              <svg id="overlay" class="overlay" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+            </div>
+          </section>
+
+          <section class="viewer-card model-card">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Model</p>
+                <h2>3D room scene</h2>
+              </div>
+            </div>
+
+            <div class="model-toolbar">
+              <div class="model-controls">
+                <label>
+                  Yaw
+                  <input id="yaw-control" type="range" min="-45" max="45" value="-18" />
+                </label>
+                <label>
+                  Pitch
+                  <input id="pitch-control" type="range" min="20" max="75" value="34" />
+                </label>
+                <label>
+                  Zoom
+                  <input id="zoom-control" type="range" min="70" max="180" value="100" />
+                </label>
+              </div>
+              <div class="controls export-controls">
+                <button id="export-json" class="ghost-button" type="button" disabled>
+                  Export JSON
+                </button>
+                <button id="export-obj" class="ghost-button" type="button" disabled>
+                  Export OBJ
+                </button>
+              </div>
+            </div>
+
+            <canvas id="model-canvas" class="model-canvas" width="1200" height="780"></canvas>
+            <pre id="scene-output" class="scene-output">No scene model yet.</pre>
+          </section>
+        </main>
+      </div>
     </div>
 
     <script type="module" src="./src/app.js"></script>
