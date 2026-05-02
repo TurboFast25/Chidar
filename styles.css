@@ -350,6 +350,35 @@ button:disabled {
   line-height: 1.5;
 }
 
+.catalog-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.catalog-card,
+.scene-entry {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  border-radius: 18px;
+  padding: 14px 15px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.catalog-card strong,
+.scene-entry strong {
+  color: var(--text);
+}
+
+.catalog-card.is-active {
+  border-color: rgba(41, 84, 209, 0.4);
+  background: rgba(236, 243, 255, 0.96);
+  box-shadow: 0 14px 26px rgba(41, 84, 209, 0.08);
+}
+
 .metric code {
   font: inherit;
   color: var(--text);
@@ -523,7 +552,8 @@ details[open] > .panel-toggle::after {
 .overlay {
   position: absolute;
   inset: 0;
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: crosshair;
 }
 
 .overlay.is-hidden {
@@ -574,6 +604,16 @@ details[open] > .panel-toggle::after {
   paint-order: stroke;
   stroke: rgba(255, 255, 255, 0.88);
   stroke-width: 0.28px;
+}
+
+.placed-item {
+  stroke: rgba(31, 44, 63, 0.7);
+  stroke-width: 0.6;
+}
+
+.placed-item.is-selected {
+  stroke: rgba(41, 84, 209, 0.98);
+  stroke-width: 0.95;
 }
 
 .model-canvas {

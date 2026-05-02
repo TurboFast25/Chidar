@@ -1,3 +1,14 @@
+const PRODUCT_CATALOG = [
+  { id: "sofa", name: "Sofa", width: 2.2, depth: 0.95, height: 0.86, color: "rgba(57, 93, 122, 0.26)" },
+  { id: "accent-chair", name: "Accent Chair", width: 0.82, depth: 0.78, height: 0.92, color: "rgba(157, 97, 72, 0.24)" },
+  { id: "coffee-table", name: "Coffee Table", width: 1.2, depth: 0.68, height: 0.42, color: "rgba(122, 108, 71, 0.24)" },
+  { id: "bed", name: "Queen Bed", width: 1.62, depth: 2.08, height: 0.58, color: "rgba(109, 92, 130, 0.24)" },
+  { id: "dining-table", name: "Dining Table", width: 1.8, depth: 0.9, height: 0.76, color: "rgba(83, 118, 88, 0.24)" },
+  { id: "media-console", name: "Media Console", width: 1.6, depth: 0.45, height: 0.56, color: "rgba(47, 84, 77, 0.24)" },
+];
+
+const SCENE_STORAGE_KEY = "chidar-ar-scenes-v1";
+
 const state = {
   roomImageDataUrl: "",
   sourceFile: null,
@@ -8,6 +19,11 @@ const state = {
   calibrationPoints: [],
   scaleCalibration: null,
   roomModel: null,
+  selectedProductId: null,
+  placementMode: false,
+  stagedItems: [],
+  selectedItemId: null,
+  savedScenes: loadSavedScenes(),
   view: {
     yaw: -18,
     pitch: 34,
@@ -32,8 +48,13 @@ const els = {
   modelBadge: document.querySelector("#model-badge"),
   fileBadge: document.querySelector("#file-badge"),
   filePanel: document.querySelector("#file-panel"),
+  catalogPanel: document.querySelector("#catalog-panel"),
   summaryPanel: document.querySelector("#summary-panel"),
   guidanceList: document.querySelector("#guidance-list"),
+  sceneLibrary: document.querySelector("#scene-library"),
+  saveScene: document.querySelector("#save-scene"),
+  loadScene: document.querySelector("#load-scene"),
+  clearScene: document.querySelector("#clear-scene"),
   modelCanvas: document.querySelector("#model-canvas"),
   yawControl: document.querySelector("#yaw-control"),
   pitchControl: document.querySelector("#pitch-control"),
@@ -53,6 +74,12 @@ function attachEvents() {
   els.toggleOverlay.addEventListener("change", renderOverlay);
   els.startCalibration.addEventListener("click", beginCalibration);
   els.overlay.addEventListener("click", handleOverlayClick);
+  els.catalogPanel.addEventListener("click", handleCatalogClick);
+  els.summaryPanel.addEventListener("click", handleSummaryAction);
+  els.sceneLibrary.addEventListener("click", handleSceneLibraryClick);
+  els.saveScene.addEventListener("click", saveCurrentScene);
+  els.loadScene.addEventListener("click", loadLatestScene);
+  els.clearScene.addEventListener("click", clearPlacements);
   els.yawControl.addEventListener("input", handleViewChange);
   els.pitchControl.addEventListener("input", handleViewChange);
   els.zoomControl.addEventListener("input", handleViewChange);
@@ -72,10 +99,14 @@ async function handleUpload(event) {
   state.sourceFileInfo = fileInfo;
   state.roomImageDataUrl = preview;
   state.analysis = null;
-  state.roomModel = null;
   state.scaleCalibration = null;
-  state.calibrationPoints = [];
+  state.roomModel = null;
   state.calibrationMode = false;
+  state.calibrationPoints = [];
+  state.selectedProductId = null;
+  state.placementMode = false;
+  state.stagedItems = [];
+  state.selectedItemId = null;
   els.image.src = state.roomImageDataUrl;
   render();
 }
@@ -90,10 +121,10 @@ async function analyzeCurrentRoom() {
 
   try {
     state.analysis = await analyzeRoomImageDataUrl(state.roomImageDataUrl);
-    state.roomModel = buildRoomModel(state.analysis, state.scaleCalibration);
+    rebuildRoomModel();
   } catch (error) {
     state.analysis = {
-      summary: `Analysis failed: ${error.message}`,
+      summary: `Surface detection failed: ${error.message}`,
       roomType: "",
       cameraView: "",
       floorPolygon: [],
@@ -102,6 +133,8 @@ async function analyzeCurrentRoom() {
       placementGuidance: [],
       lighting: "",
       model: "",
+      dominantSide: "center",
+      horizonPercent: 58,
     };
     state.roomModel = null;
   } finally {
@@ -120,6 +153,10 @@ function resetState() {
   state.calibrationPoints = [];
   state.scaleCalibration = null;
   state.roomModel = null;
+  state.selectedProductId = null;
+  state.placementMode = false;
+  state.stagedItems = [];
+  state.selectedItemId = null;
   els.upload.value = "";
   els.image.removeAttribute("src");
   render();
@@ -128,21 +165,29 @@ function resetState() {
 function render() {
   const hasImage = Boolean(state.roomImageDataUrl);
   const hasAnalysis = Boolean(state.analysis);
+  const hasScene = state.stagedItems.length > 0;
+  const hasWorkspaceData = hasImage || hasAnalysis;
 
   els.analyzeButton.disabled = !hasImage || state.analyzing;
   els.startCalibration.disabled = !hasImage;
   els.exportJson.disabled = !state.roomModel;
   els.exportObj.disabled = !state.roomModel;
-  els.statusBadge.textContent = state.analyzing ? "Analyzing" : hasAnalysis ? "Mapped" : hasImage ? "Ready" : "Idle";
+  els.saveScene.disabled = !state.roomModel || !hasScene;
+  els.loadScene.disabled = !state.savedScenes.length;
+  els.clearScene.disabled = !hasScene;
+  els.statusBadge.textContent = state.analyzing ? "Detecting" : hasAnalysis ? "Surface mapped" : hasImage ? "Ready" : "Idle";
   els.calibrationBadge.textContent = state.scaleCalibration ? "Calibrated" : state.calibrationMode ? "Select points" : "Uncalibrated";
-  els.modelBadge.textContent = state.roomModel ? "Usable scene" : hasAnalysis ? "Needs calibration" : "Waiting for analysis";
+  els.modelBadge.textContent = state.roomModel ? `${state.stagedItems.length} item${state.stagedItems.length === 1 ? "" : "s"} staged` : hasAnalysis ? "Awaiting placement" : "Waiting for scan";
   els.fileBadge.textContent = state.sourceFileInfo ? state.sourceFileInfo.kindLabel : "No file";
-  els.dropHint.hidden = hasImage;
+  els.dropHint.hidden = hasWorkspaceData;
   els.viewer.hidden = !hasImage;
 
-  if (!hasImage) {
-    renderFilePanel();
-    els.summaryPanel.textContent = "Upload an image to begin.";
+  renderCatalog();
+  renderFilePanel();
+  renderSceneLibrary();
+
+  if (!hasWorkspaceData) {
+    els.summaryPanel.textContent = "Upload a room image to begin.";
     els.guidanceList.innerHTML = "<li>No guidance yet.</li>";
     els.overlay.innerHTML = "";
     els.sceneOutput.textContent = "No scene model yet.";
@@ -151,16 +196,19 @@ function render() {
   }
 
   if (!hasAnalysis) {
-    renderFilePanel();
-    els.summaryPanel.innerHTML = '<div class="metric"><strong>Image loaded</strong>Run the analyzer to generate floor, wall, and occupied-zone estimates.</div>';
-    els.guidanceList.innerHTML = "<li>Analyze the uploaded room to generate placement guidance.</li>";
+    els.summaryPanel.innerHTML = '<div class="metric"><strong>Scan status</strong>Run surface detection to estimate the floor plane and occupied zones before staging.</div>';
+    els.guidanceList.innerHTML = "<li>Detect surfaces before selecting a catalog item.</li>";
     els.overlay.innerHTML = "";
-    els.sceneOutput.textContent = "Analyze the image to generate a room scene payload.";
+    els.sceneOutput.textContent = "Detect surfaces to generate a stageable room scene payload.";
     renderModelCanvas();
     return;
   }
 
-  renderFilePanel();
+  if (!hasImage) {
+    els.dropHint.hidden = false;
+    els.dropHint.textContent = "Scene restored without the original image preview. Upload the matching room image to continue image-anchored placement.";
+  }
+
   renderSummary();
   renderGuidance();
   renderOverlay();
@@ -168,8 +216,43 @@ function render() {
   renderModelCanvas();
 }
 
+function renderCatalog() {
+  els.catalogPanel.innerHTML = PRODUCT_CATALOG.map((product) => {
+    const isActive = state.selectedProductId === product.id;
+    return `
+      <button class="catalog-card${isActive ? " is-active" : ""}" type="button" data-product-id="${product.id}">
+        <strong>${escapeHtml(product.name)}</strong>
+        <span>${product.width.toFixed(2)}m x ${product.depth.toFixed(2)}m x ${product.height.toFixed(2)}m</span>
+        <span>${isActive ? "Tap floor to place" : "Select for placement"}</span>
+      </button>
+    `;
+  }).join("");
+}
+
 function renderSummary() {
   const analysis = state.analysis;
+  const selectedItem = getSelectedItem();
+  const placementText = state.selectedProductId
+    ? `Selected ${getProductById(state.selectedProductId)?.name || "item"}. Tap inside the floor polygon to place it.`
+    : "Select a catalog item to enter placement mode.";
+  const selectedItemMarkup = selectedItem
+    ? `
+      <div class="metric">
+        <strong>Selected item</strong>
+        ${escapeHtml(selectedItem.name)} at ${selectedItem.x.toFixed(2)}m, ${selectedItem.z.toFixed(2)}m
+      </div>
+      <div class="controls item-actions">
+        <button class="ghost-button" type="button" data-action="rotate-left">Rotate -15°</button>
+        <button class="ghost-button" type="button" data-action="rotate-right">Rotate +15°</button>
+        <button class="ghost-button" type="button" data-action="nudge-left">Move left</button>
+        <button class="ghost-button" type="button" data-action="nudge-right">Move right</button>
+        <button class="ghost-button" type="button" data-action="nudge-forward">Move forward</button>
+        <button class="ghost-button" type="button" data-action="nudge-back">Move back</button>
+        <button class="ghost-button" type="button" data-action="delete-item">Remove item</button>
+      </div>
+    `
+    : "";
+
   els.summaryPanel.innerHTML = `
     <div class="metric">
       <strong>Summary</strong>
@@ -188,20 +271,25 @@ function renderSummary() {
       ${escapeHtml(analysis.lighting || "Unknown")}
     </div>
     <div class="metric">
-      <strong>Model</strong>
-      ${escapeHtml(analysis.model || "Local heuristic")}
-    </div>
-    <div class="metric">
       <strong>Scale</strong>
       ${escapeHtml(formatScaleSummary())}
     </div>
+    <div class="metric">
+      <strong>Placement mode</strong>
+      ${escapeHtml(placementText)}
+    </div>
+    <div class="metric">
+      <strong>Placement rules</strong>
+      Horizontal plane only, upright alignment, minimum surface area, and no overlap with blocked zones.
+    </div>
+    ${selectedItemMarkup}
   `;
 }
 
 function renderFilePanel() {
   const info = state.sourceFileInfo;
   if (!info) {
-    els.filePanel.textContent = "Upload an original iPhone HEIC file to inspect depth-related metadata.";
+    els.filePanel.textContent = "Upload an original room capture to inspect format and depth-related hints.";
     return;
   }
 
@@ -230,10 +318,29 @@ function renderFilePanel() {
 }
 
 function renderGuidance() {
-  const guidance = state.analysis.placementGuidance || [];
+  const guidance = state.analysis?.placementGuidance || [];
   els.guidanceList.innerHTML = guidance.length
     ? guidance.map((item) => `<li>${escapeHtml(item)}</li>`).join("")
     : "<li>No guidance returned.</li>";
+}
+
+function renderSceneLibrary() {
+  if (!state.savedScenes.length) {
+    els.sceneLibrary.textContent = "No saved scenes yet.";
+    return;
+  }
+
+  els.sceneLibrary.innerHTML = state.savedScenes
+    .map(
+      (scene) => `
+        <button class="scene-entry" type="button" data-scene-id="${scene.id}">
+          <strong>${escapeHtml(scene.name)}</strong>
+          <span>${new Date(scene.savedAt).toLocaleString()}</span>
+          <span>${scene.items.length} item${scene.items.length === 1 ? "" : "s"}</span>
+        </button>
+      `,
+    )
+    .join("");
 }
 
 function renderOverlay() {
@@ -262,12 +369,36 @@ function renderOverlay() {
     )
     .join("");
   const calibrationMarkup = renderCalibrationMarkup();
+  const stagedMarkup = state.stagedItems.map(renderOverlayItem).join("");
+  const placementNote = state.selectedProductId && !state.calibrationMode
+    ? '<text class="overlay-note" x="4" y="8">Placement mode active: tap inside the floor polygon.</text>'
+    : "";
 
   els.overlay.innerHTML = `
     ${floorPolygon ? `<polygon class="floor-polygon" points="${floorPolygon}"></polygon>` : ""}
     ${wallZones}
     ${avoidZones}
+    ${stagedMarkup}
     ${calibrationMarkup}
+    ${placementNote}
+  `;
+}
+
+function renderOverlayItem(item) {
+  const overlay = worldToOverlayRect(item);
+  const isSelected = item.id === state.selectedItemId;
+  return `
+    <rect
+      class="placed-item${isSelected ? " is-selected" : ""}"
+      x="${overlay.x}"
+      y="${overlay.y}"
+      width="${overlay.width}"
+      height="${overlay.height}"
+      rx="1.1"
+      data-item-id="${item.id}"
+      style="fill: ${item.color};"
+    ></rect>
+    <text class="overlay-label" x="${overlay.x + 0.8}" y="${overlay.y + 2.8}">${escapeHtml(item.name)}</text>
   `;
 }
 
@@ -301,22 +432,180 @@ function renderCalibrationMarkup() {
 function beginCalibration() {
   state.calibrationMode = true;
   state.calibrationPoints = [];
+  state.selectedProductId = null;
+  state.placementMode = false;
   render();
 }
 
 function handleOverlayClick(event) {
-  if (!state.calibrationMode) {
+  if (!state.analysis) {
     return;
   }
 
   const svgPoint = getSvgPercentPoint(event);
-  state.calibrationPoints = [...state.calibrationPoints, svgPoint].slice(0, 2);
 
-  if (state.calibrationPoints.length === 2) {
-    commitCalibration();
+  if (state.calibrationMode) {
+    state.calibrationPoints = [...state.calibrationPoints, svgPoint].slice(0, 2);
+    if (state.calibrationPoints.length === 2) {
+      commitCalibration();
+    }
+    render();
+    return;
   }
 
+  const clickedItem = findItemAtOverlayPoint(svgPoint);
+  if (clickedItem) {
+    state.selectedItemId = clickedItem.id;
+    state.selectedProductId = null;
+    state.placementMode = false;
+    render();
+    return;
+  }
+
+  if (!state.selectedProductId || !state.placementMode) {
+    state.selectedItemId = null;
+    render();
+    return;
+  }
+
+  placeSelectedProduct(svgPoint);
+}
+
+function handleCatalogClick(event) {
+  const button = event.target.closest("[data-product-id]");
+  if (!button || !state.analysis) {
+    return;
+  }
+
+  const productId = button.dataset.productId;
+  state.selectedProductId = state.selectedProductId === productId ? null : productId;
+  state.placementMode = Boolean(state.selectedProductId);
+  state.selectedItemId = null;
   render();
+}
+
+function handleSummaryAction(event) {
+  const button = event.target.closest("[data-action]");
+  if (!button || !state.selectedItemId) {
+    return;
+  }
+
+  const action = button.dataset.action;
+  const selectedItem = getSelectedItem();
+  if (!selectedItem) {
+    return;
+  }
+
+  const updates = { ...selectedItem };
+  if (action === "rotate-left") {
+    updates.rotation = normalizeRotation(selectedItem.rotation - 15);
+  }
+  if (action === "rotate-right") {
+    updates.rotation = normalizeRotation(selectedItem.rotation + 15);
+  }
+  if (action === "nudge-left") {
+    updates.x -= 0.15;
+  }
+  if (action === "nudge-right") {
+    updates.x += 0.15;
+  }
+  if (action === "nudge-forward") {
+    updates.z -= 0.15;
+  }
+  if (action === "nudge-back") {
+    updates.z += 0.15;
+  }
+  if (action === "delete-item") {
+    state.stagedItems = state.stagedItems.filter((item) => item.id !== selectedItem.id);
+    state.selectedItemId = null;
+    rebuildRoomModel();
+    render();
+    return;
+  }
+
+  if (action.startsWith("nudge") || action.startsWith("rotate")) {
+    if (canPlaceItem(updates, selectedItem.id)) {
+      state.stagedItems = state.stagedItems.map((item) => (item.id === selectedItem.id ? updates : item));
+      rebuildRoomModel();
+    }
+    render();
+  }
+}
+
+function handleSceneLibraryClick(event) {
+  const button = event.target.closest("[data-scene-id]");
+  if (!button) {
+    return;
+  }
+  const scene = state.savedScenes.find((entry) => entry.id === button.dataset.sceneId);
+  if (!scene) {
+    return;
+  }
+  restoreScene(scene);
+}
+
+function placeSelectedProduct(svgPoint) {
+  const product = getProductById(state.selectedProductId);
+  if (!product) {
+    return;
+  }
+
+  const room = getRoomDimensions();
+  const proposed = {
+    id: `item-${Date.now()}`,
+    productId: product.id,
+    name: product.name,
+    width: product.width,
+    depth: product.depth,
+    height: product.height,
+    color: product.color,
+    rotation: 0,
+    ...overlayToWorldPoint(svgPoint, room),
+  };
+
+  if (!canPlaceItem(proposed)) {
+    state.selectedItemId = null;
+    render();
+    return;
+  }
+
+  state.stagedItems = [...state.stagedItems, proposed];
+  state.selectedItemId = proposed.id;
+  state.selectedProductId = null;
+  state.placementMode = false;
+  rebuildRoomModel();
+  render();
+}
+
+function canPlaceItem(item, ignoredItemId = null) {
+  const room = getRoomDimensions();
+  const footprint = getItemFootprint(item);
+
+  if (
+    footprint.minX < 0.05 ||
+    footprint.maxX > room.width - 0.05 ||
+    footprint.minZ < 0.05 ||
+    footprint.maxZ > room.depth - 0.05
+  ) {
+    return false;
+  }
+
+  const minSurface = 0.35;
+  if (item.width * item.depth < minSurface) {
+    return false;
+  }
+
+  const blockedZones = (state.analysis?.avoidZones || []).map((zone) => avoidZoneToWorldRect(zone, room));
+  if (blockedZones.some((zone) => rectsOverlap(footprint, zone, 0.05))) {
+    return false;
+  }
+
+  return !state.stagedItems.some((existing) => {
+    if (existing.id === ignoredItemId) {
+      return false;
+    }
+    return rectsOverlap(footprint, getItemFootprint(existing), 0.08);
+  });
 }
 
 function commitCalibration() {
@@ -343,8 +632,435 @@ function commitCalibration() {
     pixelsPerMeter: pixelHeight / realHeightMeters,
   };
   state.calibrationMode = false;
-  if (state.analysis) {
-    state.roomModel = buildRoomModel(state.analysis, state.scaleCalibration);
+  rebuildRoomModel();
+}
+
+function rebuildRoomModel() {
+  if (!state.analysis) {
+    state.roomModel = null;
+    return;
+  }
+
+  const roomWidth = estimateRoomWidthMeters(state.analysis, state.scaleCalibration);
+  const roomDepth = estimateRoomDepthMeters(state.analysis, state.scaleCalibration);
+  const roomHeight = estimateRoomHeightMeters(state.scaleCalibration);
+  state.roomModel = {
+    width: roomWidth,
+    depth: roomDepth,
+    height: roomHeight,
+    objects: state.stagedItems.map((item) => ({
+      id: item.id,
+      name: item.name,
+      x: item.x,
+      z: item.z,
+      width: item.width,
+      depth: item.depth,
+      height: item.height,
+      rotation: item.rotation,
+      color: item.color,
+    })),
+    walls: [
+      { name: "left wall", width: roomDepth, height: roomHeight },
+      { name: "back wall", width: roomWidth, height: roomHeight },
+      { name: "right wall", width: roomDepth, height: roomHeight },
+    ],
+  };
+}
+
+function getRoomDimensions() {
+  if (state.roomModel) {
+    return state.roomModel;
+  }
+  return {
+    width: estimateRoomWidthMeters(state.analysis, state.scaleCalibration),
+    depth: estimateRoomDepthMeters(state.analysis, state.scaleCalibration),
+    height: estimateRoomHeightMeters(state.scaleCalibration),
+  };
+}
+
+function handleViewChange() {
+  state.view.yaw = Number(els.yawControl.value);
+  state.view.pitch = Number(els.pitchControl.value);
+  state.view.zoom = Number(els.zoomControl.value);
+  renderModelCanvas();
+}
+
+function renderSceneOutput() {
+  if (!state.roomModel || !state.analysis) {
+    els.sceneOutput.textContent = "No scene model yet.";
+    return;
+  }
+
+  els.sceneOutput.textContent = JSON.stringify(buildScenePayload(), null, 2);
+}
+
+function buildScenePayload() {
+  return {
+    units: "meters",
+    source: "browser-ar-staging-framework",
+    sourceFile: state.sourceFileInfo
+      ? {
+          name: state.sourceFileInfo.name,
+          format: state.sourceFileInfo.kindLabel,
+          mimeType: state.sourceFileInfo.mimeType,
+          sizeBytes: state.sourceFileInfo.sizeBytes,
+          depthStatus: state.sourceFileInfo.depthStatus,
+          signals: state.sourceFileInfo.signals,
+        }
+      : null,
+    calibration: state.scaleCalibration
+      ? {
+          label: state.scaleCalibration.label,
+          realHeightMeters: state.scaleCalibration.realHeightMeters,
+          pixelsPerMeter: Number(state.scaleCalibration.pixelsPerMeter.toFixed(2)),
+        }
+      : null,
+    analysis: {
+      summary: state.analysis.summary,
+      roomType: state.analysis.roomType,
+      cameraView: state.analysis.cameraView,
+      lighting: state.analysis.lighting,
+      planeSupport: "horizontal-floor-only",
+    },
+    room: {
+      width: Number(state.roomModel.width.toFixed(3)),
+      depth: Number(state.roomModel.depth.toFixed(3)),
+      height: Number(state.roomModel.height.toFixed(3)),
+    },
+    floorPolygon: (state.analysis.floorPolygon || []).map((point) => ({
+      x: Number(point.x.toFixed(3)),
+      y: Number(point.y.toFixed(3)),
+    })),
+    walls: state.roomModel.walls,
+    placedFurniture: state.stagedItems.map((item) => ({
+      id: item.id,
+      productId: item.productId,
+      name: item.name,
+      x: Number(item.x.toFixed(3)),
+      z: Number(item.z.toFixed(3)),
+      width: Number(item.width.toFixed(3)),
+      depth: Number(item.depth.toFixed(3)),
+      height: Number(item.height.toFixed(3)),
+      rotation: item.rotation,
+    })),
+  };
+}
+
+function exportSceneJson() {
+  if (!state.roomModel) {
+    return;
+  }
+  downloadFile("chidar-ar-scene.json", JSON.stringify(buildScenePayload(), null, 2), "application/json");
+}
+
+function exportSceneObj() {
+  if (!state.roomModel) {
+    return;
+  }
+  downloadFile("chidar-ar-scene.obj", buildObjText(state.roomModel), "text/plain");
+}
+
+function downloadFile(filename, content, contentType) {
+  const blob = new Blob([content], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function renderModelCanvas() {
+  const canvas = els.modelCanvas;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return;
+  }
+
+  const width = canvas.width;
+  const height = canvas.height;
+  context.clearRect(0, 0, width, height);
+
+  drawModelBackground(context, width, height);
+
+  if (!state.roomModel) {
+    drawCanvasMessage(
+      context,
+      width,
+      height,
+      state.analysis
+        ? "Select a catalog item and place it on the detected floor plane."
+        : "Detect surfaces to generate the stageable room volume.",
+    );
+    return;
+  }
+
+  drawRoomModel(context, width, height, state.roomModel, state.view);
+}
+
+function drawModelBackground(context, width, height) {
+  const gradient = context.createLinearGradient(0, 0, 0, height);
+  gradient.addColorStop(0, "rgba(255,252,247,0.9)");
+  gradient.addColorStop(1, "rgba(224,210,187,0.85)");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, width, height);
+}
+
+function drawCanvasMessage(context, width, height, message) {
+  context.fillStyle = "rgba(58, 47, 38, 0.78)";
+  context.font = "600 32px 'Space Grotesk', sans-serif";
+  context.textAlign = "center";
+  context.fillText("AR Staging Preview", width / 2, height / 2 - 16);
+  context.font = "500 22px 'Space Grotesk', sans-serif";
+  context.fillStyle = "rgba(88, 74, 60, 0.72)";
+  wrapCanvasText(context, message, width / 2, height / 2 + 28, width * 0.68, 30);
+}
+
+function wrapCanvasText(context, text, x, y, maxWidth, lineHeight) {
+  const words = text.split(/\s+/);
+  let line = "";
+  let offset = 0;
+
+  words.forEach((word) => {
+    const test = line ? `${line} ${word}` : word;
+    if (context.measureText(test).width > maxWidth && line) {
+      context.fillText(line, x, y + offset);
+      line = word;
+      offset += lineHeight;
+    } else {
+      line = test;
+    }
+  });
+
+  if (line) {
+    context.fillText(line, x, y + offset);
+  }
+}
+
+function drawRoomModel(context, width, height, model, view) {
+  const camera = {
+    x: width * 0.5,
+    y: height * 0.72,
+    scale:
+      (Math.min(width, height) * 0.12 * (view.zoom / 100)) /
+      Math.max(model.width, model.depth, model.height),
+    pitch: Number(view.pitch) / 100,
+    yaw: (Number(view.yaw) * Math.PI) / 180,
+  };
+
+  const floor = [
+    projectPoint(0, 0, 0, camera),
+    projectPoint(model.width, 0, 0, camera),
+    projectPoint(model.width, 0, model.depth, camera),
+    projectPoint(0, 0, model.depth, camera),
+  ];
+  const ceiling = [
+    projectPoint(0, model.height, 0, camera),
+    projectPoint(model.width, model.height, 0, camera),
+    projectPoint(model.width, model.height, model.depth, camera),
+    projectPoint(0, model.height, model.depth, camera),
+  ];
+
+  context.fillStyle = "rgba(188, 144, 101, 0.22)";
+  drawPolygon(context, floor, true);
+  context.fillStyle = "rgba(137, 155, 118, 0.12)";
+  drawPolygon(context, [ceiling[0], ceiling[1], floor[1], floor[0]], true);
+  drawPolygon(context, [ceiling[1], ceiling[2], floor[2], floor[1]], true);
+
+  context.strokeStyle = "rgba(73, 58, 44, 0.9)";
+  context.lineWidth = 2;
+  [floor, ceiling].forEach((face) => drawPolygon(context, face, false));
+  for (let index = 0; index < floor.length; index += 1) {
+    drawLine(context, floor[index], ceiling[index]);
+  }
+
+  model.objects.forEach((object, index) => {
+    drawObjectBox(context, object, camera, index, object.id === state.selectedItemId);
+  });
+
+  context.fillStyle = "rgba(33, 29, 24, 0.82)";
+  context.font = "600 28px 'Space Grotesk', sans-serif";
+  context.textAlign = "left";
+  context.fillText(
+    `${model.width.toFixed(1)}m x ${model.depth.toFixed(1)}m x ${model.height.toFixed(1)}m`,
+    32,
+    44,
+  );
+}
+
+function drawObjectBox(context, object, camera, index, isSelected) {
+  const x1 = object.x - object.width / 2;
+  const x2 = object.x + object.width / 2;
+  const z1 = object.z - object.depth / 2;
+  const z2 = object.z + object.depth / 2;
+  const y = object.height;
+  const bottom = [
+    projectPoint(x1, 0, z1, camera),
+    projectPoint(x2, 0, z1, camera),
+    projectPoint(x2, 0, z2, camera),
+    projectPoint(x1, 0, z2, camera),
+  ];
+  const top = [
+    projectPoint(x1, y, z1, camera),
+    projectPoint(x2, y, z1, camera),
+    projectPoint(x2, y, z2, camera),
+    projectPoint(x1, y, z2, camera),
+  ];
+  const palette = ["rgba(57, 93, 122, 0.22)", "rgba(157, 97, 72, 0.22)", "rgba(97, 119, 80, 0.22)"];
+
+  context.fillStyle = object.color || palette[index % palette.length];
+  drawPolygon(context, [top[0], top[1], bottom[1], bottom[0]], true);
+  drawPolygon(context, [top[1], top[2], bottom[2], bottom[1]], true);
+  drawPolygon(context, top, true);
+  context.strokeStyle = isSelected ? "rgba(31, 67, 166, 0.95)" : "rgba(43, 51, 60, 0.9)";
+  context.lineWidth = isSelected ? 2.2 : 1.6;
+  [bottom, top].forEach((face) => drawPolygon(context, face, false));
+  for (let edge = 0; edge < bottom.length; edge += 1) {
+    drawLine(context, bottom[edge], top[edge]);
+  }
+}
+
+function drawPolygon(context, points, fill) {
+  if (!points.length) {
+    return;
+  }
+  context.beginPath();
+  context.moveTo(points[0].x, points[0].y);
+  points.slice(1).forEach((point) => context.lineTo(point.x, point.y));
+  context.closePath();
+  if (fill) {
+    context.fill();
+  } else {
+    context.stroke();
+  }
+}
+
+function drawLine(context, start, end) {
+  context.beginPath();
+  context.moveTo(start.x, start.y);
+  context.lineTo(end.x, end.y);
+  context.stroke();
+}
+
+function projectPoint(x, y, z, camera) {
+  const rotatedX = x * Math.cos(camera.yaw) - z * Math.sin(camera.yaw);
+  const rotatedZ = x * Math.sin(camera.yaw) + z * Math.cos(camera.yaw);
+  const isoX = rotatedX - rotatedZ;
+  const isoY = (rotatedX + rotatedZ) * camera.pitch - y * 1.28;
+  return {
+    x: camera.x + isoX * 0.86 * camera.scale,
+    y: camera.y - isoY * camera.scale,
+  };
+}
+
+function buildObjText(model) {
+  const vertices = [];
+  const faces = [];
+
+  addBox(vertices, faces, 0, 0, 0, model.width, 0.02, model.depth);
+  addBox(vertices, faces, 0, 0, 0, 0.02, model.height, model.depth);
+  addBox(vertices, faces, model.width - 0.02, 0, 0, 0.02, model.height, model.depth);
+  addBox(vertices, faces, 0, 0, model.depth - 0.02, model.width, model.height, 0.02);
+  model.objects.forEach((object) => {
+    addBox(
+      vertices,
+      faces,
+      object.x - object.width / 2,
+      0,
+      object.z - object.depth / 2,
+      object.width,
+      object.height,
+      object.depth,
+    );
+  });
+
+  return [
+    "# Chidar AR staging model",
+    ...vertices.map((vertex) => `v ${vertex.x} ${vertex.y} ${vertex.z}`),
+    ...faces.map((face) => `f ${face.join(" ")}`),
+    "",
+  ].join("\n");
+}
+
+function addBox(vertices, faces, x, y, z, width, height, depth) {
+  const start = vertices.length + 1;
+  vertices.push(
+    { x, y, z },
+    { x: x + width, y, z },
+    { x: x + width, y: y + height, z },
+    { x, y: y + height, z },
+    { x, y, z: z + depth },
+    { x: x + width, y, z: z + depth },
+    { x: x + width, y: y + height, z: z + depth },
+    { x, y: y + height, z: z + depth },
+  );
+  faces.push(
+    [start, start + 1, start + 2, start + 3],
+    [start + 4, start + 5, start + 6, start + 7],
+    [start, start + 1, start + 5, start + 4],
+    [start + 1, start + 2, start + 6, start + 5],
+    [start + 2, start + 3, start + 7, start + 6],
+    [start + 3, start, start + 4, start + 7],
+  );
+}
+
+function saveCurrentScene() {
+  if (!state.roomModel || !state.analysis || !state.stagedItems.length) {
+    return;
+  }
+
+  const scene = {
+    id: `scene-${Date.now()}`,
+    name: `${state.analysis.roomType || "room"} scene`,
+    savedAt: new Date().toISOString(),
+    payload: buildScenePayload(),
+    items: state.stagedItems,
+    analysis: state.analysis,
+    calibration: state.scaleCalibration,
+    sourceFileInfo: state.sourceFileInfo,
+  };
+  state.savedScenes = [scene, ...state.savedScenes].slice(0, 8);
+  persistScenes();
+  render();
+}
+
+function loadLatestScene() {
+  if (!state.savedScenes.length) {
+    return;
+  }
+  restoreScene(state.savedScenes[0]);
+}
+
+function clearPlacements() {
+  state.stagedItems = [];
+  state.selectedItemId = null;
+  state.selectedProductId = null;
+  state.placementMode = false;
+  rebuildRoomModel();
+  render();
+}
+
+function restoreScene(scene) {
+  state.analysis = scene.analysis;
+  state.scaleCalibration = scene.calibration;
+  state.sourceFileInfo = scene.sourceFileInfo;
+  state.stagedItems = (scene.items || []).map((item) => ({ ...item }));
+  state.selectedItemId = null;
+  state.selectedProductId = null;
+  state.placementMode = false;
+  rebuildRoomModel();
+  render();
+}
+
+function persistScenes() {
+  localStorage.setItem(SCENE_STORAGE_KEY, JSON.stringify(state.savedScenes));
+}
+
+function loadSavedScenes() {
+  try {
+    return JSON.parse(localStorage.getItem(SCENE_STORAGE_KEY) || "[]");
+  } catch {
+    return [];
   }
 }
 
@@ -435,10 +1151,10 @@ function detectHeicSignals(ascii) {
 
 function summarizeDepthSignals(isHeicLike, signals) {
   if (!isHeicLike) {
-    return "Non-HEIC image. Chidar will use RGB-only reconstruction.";
+    return "Non-HEIC image. Browser flow will use RGB-only surface estimation.";
   }
   if (signals.some((signal) => signal.includes("depth")) || signals.includes("disparity")) {
-    return "Possible depth/disparity payload detected. Browser path preserves the original file for future extraction.";
+    return "Possible depth/disparity payload detected. Original file is preserved for future native extraction.";
   }
   if (signals.includes("portrait") || signals.includes("auxiliary-data")) {
     return "Possible auxiliary image payload detected, but browser-side depth extraction is not confirmed yet.";
@@ -459,352 +1175,6 @@ function formatBytes(bytes) {
   const power = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   const value = bytes / 1024 ** power;
   return `${value.toFixed(value >= 10 || power === 0 ? 0 : 1)} ${units[power]}`;
-}
-
-function renderModelCanvas() {
-  const canvas = els.modelCanvas;
-  const context = canvas.getContext("2d");
-  if (!context) {
-    return;
-  }
-
-  const width = canvas.width;
-  const height = canvas.height;
-  context.clearRect(0, 0, width, height);
-
-  drawModelBackground(context, width, height);
-
-  if (!state.roomModel) {
-    drawCanvasMessage(
-      context,
-      width,
-      height,
-      state.analysis
-        ? "Add a scale calibration to improve room dimensions."
-        : "Analyze a room image to generate a 3D box model.",
-    );
-    return;
-  }
-
-  drawRoomModel(context, width, height, state.roomModel, state.view);
-}
-
-function drawModelBackground(context, width, height) {
-  const gradient = context.createLinearGradient(0, 0, 0, height);
-  gradient.addColorStop(0, "rgba(255,252,247,0.9)");
-  gradient.addColorStop(1, "rgba(224,210,187,0.85)");
-  context.fillStyle = gradient;
-  context.fillRect(0, 0, width, height);
-}
-
-function drawCanvasMessage(context, width, height, message) {
-  context.fillStyle = "rgba(58, 47, 38, 0.78)";
-  context.font = "600 32px 'Space Grotesk', sans-serif";
-  context.textAlign = "center";
-  context.fillText("3D Preview", width / 2, height / 2 - 16);
-  context.font = "500 22px 'Space Grotesk', sans-serif";
-  context.fillStyle = "rgba(88, 74, 60, 0.72)";
-  wrapCanvasText(context, message, width / 2, height / 2 + 28, width * 0.68, 30);
-}
-
-function wrapCanvasText(context, text, x, y, maxWidth, lineHeight) {
-  const words = text.split(/\s+/);
-  let line = "";
-  let offset = 0;
-
-  words.forEach((word) => {
-    const test = line ? `${line} ${word}` : word;
-    if (context.measureText(test).width > maxWidth && line) {
-      context.fillText(line, x, y + offset);
-      line = word;
-      offset += lineHeight;
-    } else {
-      line = test;
-    }
-  });
-
-  if (line) {
-    context.fillText(line, x, y + offset);
-  }
-}
-
-function drawRoomModel(context, width, height, model, view) {
-  const camera = {
-    x: width * 0.5,
-    y: height * 0.72,
-    scale:
-      (Math.min(width, height) * 0.12 * (view.zoom / 100)) /
-      Math.max(model.width, model.depth, model.height),
-    pitch: Number(view.pitch) / 100,
-    yaw: (Number(view.yaw) * Math.PI) / 180,
-  };
-
-  const floor = [
-    projectPoint(0, 0, 0, camera),
-    projectPoint(model.width, 0, 0, camera),
-    projectPoint(model.width, 0, model.depth, camera),
-    projectPoint(0, 0, model.depth, camera),
-  ];
-  const ceiling = [
-    projectPoint(0, model.height, 0, camera),
-    projectPoint(model.width, model.height, 0, camera),
-    projectPoint(model.width, model.height, model.depth, camera),
-    projectPoint(0, model.height, model.depth, camera),
-  ];
-
-  context.fillStyle = "rgba(188, 144, 101, 0.22)";
-  drawPolygon(context, floor, true);
-  context.fillStyle = "rgba(137, 155, 118, 0.12)";
-  drawPolygon(context, [ceiling[0], ceiling[1], floor[1], floor[0]], true);
-  drawPolygon(context, [ceiling[1], ceiling[2], floor[2], floor[1]], true);
-
-  context.strokeStyle = "rgba(73, 58, 44, 0.9)";
-  context.lineWidth = 2;
-  [floor, ceiling].forEach((face) => drawPolygon(context, face, false));
-  for (let index = 0; index < floor.length; index += 1) {
-    drawLine(context, floor[index], ceiling[index]);
-  }
-
-  model.objects.forEach((object, index) => {
-    drawObjectBox(context, object, camera, index);
-  });
-
-  context.fillStyle = "rgba(33, 29, 24, 0.82)";
-  context.font = "600 28px 'Space Grotesk', sans-serif";
-  context.textAlign = "left";
-  context.fillText(
-    `${model.width.toFixed(1)}m x ${model.depth.toFixed(1)}m x ${model.height.toFixed(1)}m`,
-    32,
-    44,
-  );
-}
-
-function drawObjectBox(context, object, camera, index) {
-  const x1 = object.x;
-  const x2 = object.x + object.width;
-  const z1 = object.z;
-  const z2 = object.z + object.depth;
-  const y = object.height;
-  const bottom = [
-    projectPoint(x1, 0, z1, camera),
-    projectPoint(x2, 0, z1, camera),
-    projectPoint(x2, 0, z2, camera),
-    projectPoint(x1, 0, z2, camera),
-  ];
-  const top = [
-    projectPoint(x1, y, z1, camera),
-    projectPoint(x2, y, z1, camera),
-    projectPoint(x2, y, z2, camera),
-    projectPoint(x1, y, z2, camera),
-  ];
-  const palette = ["rgba(57, 93, 122, 0.22)", "rgba(157, 97, 72, 0.22)", "rgba(97, 119, 80, 0.22)"];
-
-  context.fillStyle = palette[index % palette.length];
-  drawPolygon(context, [top[0], top[1], bottom[1], bottom[0]], true);
-  drawPolygon(context, [top[1], top[2], bottom[2], bottom[1]], true);
-  drawPolygon(context, top, true);
-  context.strokeStyle = "rgba(43, 51, 60, 0.9)";
-  context.lineWidth = 1.6;
-  [bottom, top].forEach((face) => drawPolygon(context, face, false));
-  for (let edge = 0; edge < bottom.length; edge += 1) {
-    drawLine(context, bottom[edge], top[edge]);
-  }
-}
-
-function drawPolygon(context, points, fill) {
-  if (!points.length) {
-    return;
-  }
-  context.beginPath();
-  context.moveTo(points[0].x, points[0].y);
-  points.slice(1).forEach((point) => context.lineTo(point.x, point.y));
-  context.closePath();
-  if (fill) {
-    context.fill();
-  } else {
-    context.stroke();
-  }
-}
-
-function drawLine(context, start, end) {
-  context.beginPath();
-  context.moveTo(start.x, start.y);
-  context.lineTo(end.x, end.y);
-  context.stroke();
-}
-
-function projectPoint(x, y, z, camera) {
-  const centerX = x;
-  const centerZ = z;
-  const rotatedX = centerX * Math.cos(camera.yaw) - centerZ * Math.sin(camera.yaw);
-  const rotatedZ = centerX * Math.sin(camera.yaw) + centerZ * Math.cos(camera.yaw);
-  const isoX = rotatedX - rotatedZ;
-  const isoY = (rotatedX + rotatedZ) * camera.pitch - y * 1.28;
-  return {
-    x: camera.x + isoX * 0.86 * camera.scale,
-    y: camera.y - isoY * camera.scale,
-  };
-}
-
-function buildRoomModel(analysis, calibration) {
-  const roomWidth = estimateRoomWidthMeters(analysis, calibration);
-  const roomDepth = estimateRoomDepthMeters(analysis, calibration);
-  const roomHeight = estimateRoomHeightMeters(calibration);
-  const objects = (analysis.avoidZones || []).map((zone, index) => {
-    const width = Math.max(0.6, roomWidth * (zone.width / 100) * 0.9);
-    const depth = Math.max(0.45, roomDepth * (zone.height / 100) * 0.4);
-    return {
-      name: zone.name || `object ${index + 1}`,
-      x: clamp(roomWidth * (zone.x / 100), 0.1, Math.max(0.1, roomWidth - width - 0.1)),
-      z: clamp(roomDepth * ((zone.y - 20) / 80), 0.1, Math.max(0.1, roomDepth - depth - 0.1)),
-      width,
-      depth,
-      height: Math.min(roomHeight * 0.6, Math.max(0.7, roomHeight * 0.28)),
-    };
-  });
-
-  return {
-    width: roomWidth,
-    depth: roomDepth,
-    height: roomHeight,
-    objects,
-    walls: [
-      { name: "left wall", width: roomDepth, height: roomHeight },
-      { name: "back wall", width: roomWidth, height: roomHeight },
-      { name: "right wall", width: roomDepth, height: roomHeight },
-    ],
-  };
-}
-
-function handleViewChange() {
-  state.view.yaw = Number(els.yawControl.value);
-  state.view.pitch = Number(els.pitchControl.value);
-  state.view.zoom = Number(els.zoomControl.value);
-  renderModelCanvas();
-}
-
-function renderSceneOutput() {
-  if (!state.roomModel || !state.analysis) {
-    els.sceneOutput.textContent = "No scene model yet.";
-    return;
-  }
-
-  const payload = buildScenePayload();
-  els.sceneOutput.textContent = JSON.stringify(payload, null, 2);
-}
-
-function buildScenePayload() {
-  return {
-    units: "meters",
-    source: "single-image reconstruction",
-    sourceFile: state.sourceFileInfo
-      ? {
-          name: state.sourceFileInfo.name,
-          format: state.sourceFileInfo.kindLabel,
-          mimeType: state.sourceFileInfo.mimeType,
-          sizeBytes: state.sourceFileInfo.sizeBytes,
-          depthStatus: state.sourceFileInfo.depthStatus,
-          signals: state.sourceFileInfo.signals,
-        }
-      : null,
-    calibration: state.scaleCalibration
-      ? {
-          label: state.scaleCalibration.label,
-          realHeightMeters: state.scaleCalibration.realHeightMeters,
-          pixelsPerMeter: Number(state.scaleCalibration.pixelsPerMeter.toFixed(2)),
-        }
-      : null,
-    analysis: {
-      summary: state.analysis.summary,
-      roomType: state.analysis.roomType,
-      cameraView: state.analysis.cameraView,
-      lighting: state.analysis.lighting,
-    },
-    room: {
-      width: Number(state.roomModel.width.toFixed(3)),
-      depth: Number(state.roomModel.depth.toFixed(3)),
-      height: Number(state.roomModel.height.toFixed(3)),
-    },
-    floorPolygon: (state.analysis.floorPolygon || []).map((point) => ({
-      x: Number(point.x.toFixed(3)),
-      y: Number(point.y.toFixed(3)),
-    })),
-    walls: state.roomModel.walls,
-    objects: state.roomModel.objects.map((object) => ({
-      name: object.name,
-      x: Number(object.x.toFixed(3)),
-      z: Number(object.z.toFixed(3)),
-      width: Number(object.width.toFixed(3)),
-      depth: Number(object.depth.toFixed(3)),
-      height: Number(object.height.toFixed(3)),
-    })),
-  };
-}
-
-function exportSceneJson() {
-  if (!state.roomModel) {
-    return;
-  }
-  downloadFile("chidar-room-model.json", JSON.stringify(buildScenePayload(), null, 2), "application/json");
-}
-
-function exportSceneObj() {
-  if (!state.roomModel) {
-    return;
-  }
-  downloadFile("chidar-room-model.obj", buildObjText(state.roomModel), "text/plain");
-}
-
-function downloadFile(filename, content, contentType) {
-  const blob = new Blob([content], { type: contentType });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
-function buildObjText(model) {
-  const vertices = [];
-  const faces = [];
-
-  addBox(vertices, faces, 0, 0, 0, model.width, 0.02, model.depth);
-  addBox(vertices, faces, 0, 0, 0, 0.02, model.height, model.depth);
-  addBox(vertices, faces, model.width - 0.02, 0, 0, 0.02, model.height, model.depth);
-  addBox(vertices, faces, 0, 0, model.depth - 0.02, model.width, model.height, 0.02);
-  model.objects.forEach((object) => {
-    addBox(vertices, faces, object.x, 0, object.z, object.width, object.height, object.depth);
-  });
-
-  return [
-    "# Chidar room model",
-    ...vertices.map((vertex) => `v ${vertex.x} ${vertex.y} ${vertex.z}`),
-    ...faces.map((face) => `f ${face.join(" ")}`),
-    "",
-  ].join("\n");
-}
-
-function addBox(vertices, faces, x, y, z, width, height, depth) {
-  const start = vertices.length + 1;
-  vertices.push(
-    { x, y, z },
-    { x: x + width, y, z },
-    { x: x + width, y: y + height, z },
-    { x, y: y + height, z },
-    { x, y, z: z + depth },
-    { x: x + width, y, z: z + depth },
-    { x: x + width, y: y + height, z: z + depth },
-    { x, y: y + height, z: z + depth },
-  );
-  faces.push(
-    [start, start + 1, start + 2, start + 3],
-    [start + 4, start + 5, start + 6, start + 7],
-    [start, start + 1, start + 5, start + 4],
-    [start + 1, start + 2, start + 6, start + 5],
-    [start + 2, start + 3, start + 7, start + 6],
-    [start + 3, start, start + 4, start + 7],
-  );
 }
 
 function estimateRoomWidthMeters(analysis, calibration) {
@@ -979,23 +1349,23 @@ function describeCameraView(imageWidth, imageHeight, horizonRow) {
 function buildPlacementGuidance(avoidZones, dominantSide, horizonPercent) {
   const guidance = [];
 
-  guidance.push("Keep larger furniture inside the visible floor polygon instead of floating it into wall zones.");
-  guidance.push("Preserve a clean walking path through the center floor area.");
+  guidance.push("Place furniture only on the detected horizontal floor plane.");
+  guidance.push("Keep larger items inside the floor polygon and upright against visible walls.");
 
   if (avoidZones.length) {
-    guidance.push("Avoid overlapping the detected occupied zones when staging new pieces.");
+    guidance.push("Avoid overlap with the detected occupied zones while preserving a clear path.");
   } else {
-    guidance.push("The room appears open enough to center a main seating or bed arrangement.");
+    guidance.push("The room appears open enough for a primary anchor piece near the back wall.");
   }
 
   if (dominantSide === "left") {
-    guidance.push("The left side appears visually heavier, so bias new placements slightly to the right.");
+    guidance.push("The left side reads heavier, so bias new placements slightly to the right.");
   } else if (dominantSide === "right") {
-    guidance.push("The right side appears visually heavier, so bias new placements slightly to the left.");
+    guidance.push("The right side reads heavier, so bias new placements slightly to the left.");
   }
 
   if (horizonPercent >= 60) {
-    guidance.push("Favor lower foreground placements because the visible floor depth is shallow.");
+    guidance.push("Favor lower-foreground placements because the visible floor depth is shallow.");
   } else {
     guidance.push("Use mid-depth placements to maintain believable perspective.");
   }
@@ -1095,8 +1465,8 @@ async function analyzeRoomImageDataUrl(roomImageDataUrl) {
   const lighting = describeLighting(overallBrightness);
   const placementGuidance = buildPlacementGuidance(avoidZones, dominantSide, horizonPercent);
   const summary = avoidZones.length
-    ? `Detected a ${roomType} with ${avoidZones.length} occupied floor zone${avoidZones.length > 1 ? "s" : ""} and a visible back wall.`
-    : `Detected a ${roomType} with a mostly open floor area and a visible back wall.`;
+    ? `Detected a ${roomType} with ${avoidZones.length} occupied floor zone${avoidZones.length > 1 ? "s" : ""} and a usable floor plane.`
+    : `Detected a ${roomType} with a mostly open floor plane and a visible back wall.`;
 
   return {
     summary,
@@ -1107,7 +1477,9 @@ async function analyzeRoomImageDataUrl(roomImageDataUrl) {
     avoidZones,
     placementGuidance,
     lighting,
-    model: "local-browser-heuristic-v1",
+    model: "local-browser-surface-v1",
+    dominantSide,
+    horizonPercent,
   };
 }
 
@@ -1118,4 +1490,95 @@ function loadImage(src) {
     image.onerror = () => reject(new Error("Could not decode the selected image."));
     image.src = src;
   });
+}
+
+function getProductById(productId) {
+  return PRODUCT_CATALOG.find((product) => product.id === productId) || null;
+}
+
+function getSelectedItem() {
+  return state.stagedItems.find((item) => item.id === state.selectedItemId) || null;
+}
+
+function overlayToWorldPoint(point, room) {
+  const floor = state.analysis?.floorPolygon || [];
+  const topY = floor[0]?.y ?? 58;
+  const leftX = floor[0]?.x ?? 10;
+  const rightX = floor[1]?.x ?? 90;
+  const nearLeftX = floor[3]?.x ?? 4;
+  const nearRightX = floor[2]?.x ?? 96;
+  const depthRatio = clamp((point.y - topY) / Math.max(1, 100 - topY), 0, 1);
+  const currentLeft = leftX + (nearLeftX - leftX) * depthRatio;
+  const currentRight = rightX + (nearRightX - rightX) * depthRatio;
+  const lateralRatio = clamp((point.x - currentLeft) / Math.max(1, currentRight - currentLeft), 0, 1);
+
+  return {
+    x: clamp(lateralRatio * room.width, 0.1, room.width - 0.1),
+    z: clamp(depthRatio * room.depth, 0.1, room.depth - 0.1),
+  };
+}
+
+function worldToOverlayRect(item) {
+  const room = getRoomDimensions();
+  const floor = state.analysis?.floorPolygon || [];
+  const topY = floor[0]?.y ?? 58;
+  const backLeftX = floor[0]?.x ?? 10;
+  const backRightX = floor[1]?.x ?? 90;
+  const frontLeftX = floor[3]?.x ?? 4;
+  const frontRightX = floor[2]?.x ?? 96;
+  const depthRatio = clamp(item.z / Math.max(room.depth, 0.1), 0, 1);
+  const leftEdge = backLeftX + (frontLeftX - backLeftX) * depthRatio;
+  const rightEdge = backRightX + (frontRightX - backRightX) * depthRatio;
+  const laneWidth = rightEdge - leftEdge;
+  const x = leftEdge + (item.x / Math.max(room.width, 0.1)) * laneWidth;
+  const y = topY + depthRatio * (100 - topY);
+  const width = clamp((item.width / Math.max(room.width, 0.1)) * laneWidth, 3, 24);
+  const height = clamp((item.depth / Math.max(room.depth, 0.1)) * (100 - topY) * 0.7, 2.5, 18);
+
+  return {
+    x: clamp(x - width / 2, 0, 100 - width),
+    y: clamp(y - height / 2, topY, 100 - height),
+    width,
+    height,
+  };
+}
+
+function findItemAtOverlayPoint(point) {
+  return state.stagedItems.find((item) => {
+    const rect = worldToOverlayRect(item);
+    return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
+  }) || null;
+}
+
+function getItemFootprint(item) {
+  return {
+    minX: item.x - item.width / 2,
+    maxX: item.x + item.width / 2,
+    minZ: item.z - item.depth / 2,
+    maxZ: item.z + item.depth / 2,
+  };
+}
+
+function avoidZoneToWorldRect(zone, room) {
+  return {
+    minX: (zone.x / 100) * room.width,
+    maxX: ((zone.x + zone.width) / 100) * room.width,
+    minZ: ((zone.y - (state.analysis?.horizonPercent || 0)) / Math.max(1, 100 - (state.analysis?.horizonPercent || 0))) * room.depth,
+    maxZ:
+      ((zone.y + zone.height - (state.analysis?.horizonPercent || 0)) / Math.max(1, 100 - (state.analysis?.horizonPercent || 0))) * room.depth,
+  };
+}
+
+function rectsOverlap(a, b, padding = 0) {
+  return !(
+    a.maxX + padding <= b.minX ||
+    a.minX >= b.maxX + padding ||
+    a.maxZ + padding <= b.minZ ||
+    a.minZ >= b.maxZ + padding
+  );
+}
+
+function normalizeRotation(rotation) {
+  const normalized = rotation % 360;
+  return normalized < 0 ? normalized + 360 : normalized;
 }
