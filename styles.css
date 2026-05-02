@@ -155,14 +155,6 @@ body {
   padding: 22px;
 }
 
-.panel-intro {
-  position: sticky;
-  top: 20px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(244, 248, 255, 0.92)),
-    var(--panel);
-}
-
 .eyebrow {
   margin: 0 0 8px;
   font-size: 0.78rem;
@@ -633,10 +625,6 @@ details[open] > .panel-toggle::after {
   .workspace {
     overflow: visible;
     padding-right: 0;
-  }
-
-  .panel-intro {
-    position: static;
   }
 
   .viewer-card {
