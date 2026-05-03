@@ -28,12 +28,12 @@ def group_occupied_columns(occupied_columns, image_width, horizon_row, image_hei
             groups.append({"start": start, "end": index - 1})
             start = -1
 
-    minimum_span = max(3, round(image_width * 0.06))
+    minimum_span = max(2, round(image_width * 0.03))
     zones = []
     for group_index, group in enumerate(groups):
         if group["end"] - group["start"] < minimum_span:
             continue
-        if len(zones) >= 3:
+        if len(zones) >= 8:
             break
         zones.append(
             {
@@ -170,6 +170,77 @@ def build_room_model(analysis, calibration, display_width, display_height, place
     }
 
 
+def detect_objects_from_grid(grid, image_width, image_height, horizon_row):
+    """Detect rectangular object regions from brightness grid using edge detection."""
+    if not grid or horizon_row >= image_height:
+        return []
+
+    # Compute edge magnitude for each pixel in the floor region
+    start_row = max(0, int(horizon_row * 0.9))
+    edge = []
+    for y in range(start_row, image_height):
+        row = []
+        for x in range(image_width):
+            dx = abs(grid[y][min(x + 1, image_width - 1)] - grid[y][max(x - 1, 0)]) if image_width > 2 else 0
+            dy = abs(grid[min(y + 1, image_height - 1)][x] - grid[max(y - 1, start_row)][x]) if y < image_height - 1 else 0
+            row.append(dx + dy)
+        edge.append(row)
+
+    if not edge:
+        return []
+
+    # Average edge value
+    flat = [v for row in edge for v in row]
+    avg_edge = sum(flat) / len(flat) if flat else 0
+    threshold = avg_edge * 1.3
+
+    # Build binary mask of high-edge pixels
+    h = len(edge)
+    w = image_width
+    mask = [[1 if edge[y][x] > threshold else 0 for x in range(w)] for y in range(h)]
+
+    # Find connected rectangular regions via simple flood-fill bounding boxes
+    visited = [[False] * w for _ in range(h)]
+    objects = []
+
+    for y in range(h):
+        for x in range(w):
+            if mask[y][x] and not visited[y][x]:
+                # BFS to find bounding box
+                min_x, max_x, min_y, max_y = x, x, y, y
+                stack = [(x, y)]
+                visited[y][x] = True
+                count = 0
+                while stack:
+                    cx, cy = stack.pop()
+                    count += 1
+                    min_x = min(min_x, cx)
+                    max_x = max(max_x, cx)
+                    min_y = min(min_y, cy)
+                    max_y = max(max_y, cy)
+                    for nx, ny in [(cx-1,cy),(cx+1,cy),(cx,cy-1),(cx,cy+1)]:
+                        if 0 <= nx < w and 0 <= ny < h and mask[ny][nx] and not visited[ny][nx]:
+                            visited[ny][nx] = True
+                            stack.append((nx, ny))
+
+                bw = max_x - min_x + 1
+                bh = max_y - min_y + 1
+                # Filter: must be big enough to be furniture
+                if bw >= w * 0.06 and bh >= h * 0.06 and count >= 8:
+                    abs_y = start_row + min_y
+                    objects.append({
+                        "name": f"object {len(objects) + 1}",
+                        "x": clamp((min_x / w) * 100, 0, 100),
+                        "y": clamp((abs_y / image_height) * 100, 0, 100),
+                        "width": clamp((bw / w) * 100, 3, 80),
+                        "height": clamp((bh / image_height) * 100, 3, 60),
+                    })
+                    if len(objects) >= 10:
+                        return objects
+
+    return objects
+
+
 def analyze_room(payload):
     image_width = payload["imageWidth"]
     image_height = payload["imageHeight"]
@@ -177,6 +248,7 @@ def analyze_room(payload):
     column_energy = payload["columnEnergy"]
     overall_brightness = payload["overallBrightness"]
     calibration = payload.get("calibration")
+    brightness_grid = payload.get("brightnessGrid")
 
     row_gradients = [0]
     row_gradients.extend(abs(row_brightness[index] - row_brightness[index - 1]) for index in range(1, len(row_brightness)))
@@ -195,10 +267,26 @@ def analyze_room(payload):
     energy_average = average(column_energy)
     occupied_columns = []
     for index, value in enumerate(column_energy):
-        lower_band = index > image_width * 0.08 and index < image_width * 0.92
-        occupied_columns.append(lower_band and value > energy_average * 1.55)
+        lower_band = index > image_width * 0.04 and index < image_width * 0.96
+        occupied_columns.append(lower_band and value > energy_average * 1.15)
 
     avoid_zones = group_occupied_columns(occupied_columns, image_width, horizon_row, image_height)
+
+    # Merge grid-based object detection if grid available
+    if brightness_grid:
+        grid_objects = detect_objects_from_grid(brightness_grid, image_width, image_height, horizon_row)
+        # Add grid objects that don't overlap existing zones
+        for obj in grid_objects:
+            overlaps = False
+            for existing in avoid_zones:
+                if (obj["x"] < existing["x"] + existing["width"] and
+                    obj["x"] + obj["width"] > existing["x"] and
+                    obj["y"] < existing["y"] + existing["height"] and
+                    obj["y"] + obj["height"] > existing["y"]):
+                    overlaps = True
+                    break
+            if not overlaps:
+                avoid_zones.append(obj)
     left_inset = 18 if dominant_side == "left" else 12
     right_inset = 18 if dominant_side == "right" else 12
     floor_polygon = [
