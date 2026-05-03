@@ -49,6 +49,13 @@ const MAJOR_OBJECTS = {
   oven: { w: 0.6, h: 0.9, d: 0.6, color: [120, 122, 130], zone: "left" },
   dishwasher: { w: 0.6, h: 0.85, d: 0.6, color: [160, 168, 178], zone: "left" },
   "kitchen island": { w: 1.6, h: 0.9, d: 0.8, color: [140, 115, 88], zone: "center" },
+  // Decor
+  plant: { w: 0.4, h: 0.9, d: 0.4, color: [72, 140, 68], zone: "front" },
+  rug: { w: 1.8, h: 0.02, d: 1.2, color: [178, 142, 110], zone: "center" },
+  lamp: { w: 0.35, h: 1.4, d: 0.35, color: [210, 190, 140], zone: "front" },
+  mirror: { w: 0.8, h: 1.2, d: 0.08, color: [180, 200, 215], zone: "back" },
+  "side table": { w: 0.5, h: 0.55, d: 0.5, color: [165, 130, 95], zone: "center" },
+  ottoman: { w: 0.6, h: 0.4, d: 0.6, color: [148, 118, 96], zone: "center" },
 };
 
 const state = {
@@ -108,19 +115,27 @@ const els = {
 document.querySelector("#landing-enter").addEventListener("click", () => {
   const landing = document.querySelector("#landing");
   const app = document.querySelector("#app-shell");
-  app.hidden = false;
-  app.style.opacity = "0";
   landing.classList.add("landing-exit");
-  landing.addEventListener("animationend", () => {
-    landing.hidden = true;
-    app.style.opacity = "1";
-  }, { once: true });
+  setTimeout(() => {
+    landing.style.display = "none";
+    app.classList.remove("app-hidden");
+    document.body.classList.add("app-active");
+    app.offsetHeight;
+    app.classList.add("app-enter");
+    handleThreePreviewResize();
+  }, 900);
+});
+document.querySelector("#landing-theme").addEventListener("click", () => {
+  const dark = document.documentElement.getAttribute("data-theme") === "dark";
+  document.documentElement.setAttribute("data-theme", dark ? "" : "dark");
+  document.querySelector("#landing-theme").textContent = dark ? "🌙" : "☀️";
+  document.querySelector("#theme-toggle").textContent = dark ? "🌙" : "☀️";
 });
 document.querySelector("#theme-toggle").addEventListener("click", () => {
   const dark = document.documentElement.getAttribute("data-theme") === "dark";
   document.documentElement.setAttribute("data-theme", dark ? "" : "dark");
   document.querySelector("#theme-toggle").textContent = dark ? "🌙" : "☀️";
-  if (threePreview?.renderer) {
+  if (threePreview?.renderer && THREE) {
     const bg = dark ? 0xf8fafe : 0x1a1d26;
     threePreview.renderer.setClearColor(bg, 1);
     threePreview.scene.background = new THREE.Color(bg);
@@ -435,9 +450,18 @@ function removeSelectedFurniture() {
 
 function rotateSelectedFurniture() {
   if (!state.floorPlan || state.selectedObjectIndex < 0) return;
-  const object = state.floorPlan.objects[state.selectedObjectIndex];
-  if (!object) return;
-  object.rotation = ((((object.rotation || 0) + Math.PI / 2) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  const o = state.floorPlan.objects[state.selectedObjectIndex];
+  if (!o) return;
+  const previousBounds = getObjectFootprintBounds(o);
+  const centerX = o.x + previousBounds.width / 2;
+  const centerZ = o.z + previousBounds.depth / 2;
+  o.rotation = ((((o.rotation || 0) + Math.PI / 2) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  const wall = state.floorPlan.wallThickness;
+  const nextBounds = getObjectFootprintBounds(o);
+  const nextCenterX = clamp(centerX, wall + nextBounds.width / 2, state.floorPlan.width - wall - nextBounds.width / 2);
+  const nextCenterZ = clamp(centerZ, wall + nextBounds.depth / 2, state.floorPlan.depth - wall - nextBounds.depth / 2);
+  o.x = nextCenterX - nextBounds.width / 2;
+  o.z = nextCenterZ - nextBounds.depth / 2;
   rebuildDerivedModels();
 }
 
@@ -514,9 +538,7 @@ function handlePlanPointerMove(event) {
     obj.depth = newD;
     obj.x = clamp(minX, wall, W - wall - newW);
     obj.z = clamp(minZ, wall, D - wall - newD);
-    rebuildMeshFromCurrentPlan();
     renderFloorPlan();
-    renderPreview();
     return;
   }
   if (state.objectDrag && state.floorPlan) {
@@ -524,14 +546,13 @@ function handlePlanPointerMove(event) {
     if (!point) return;
     const object = state.floorPlan.objects[state.objectDrag.index];
     if (!object) return;
-    object.x = clamp(point.x - state.objectDrag.offsetX, state.floorPlan.wallThickness, state.floorPlan.width - state.floorPlan.wallThickness - object.width);
-    object.z = clamp(point.z - state.objectDrag.offsetZ, state.floorPlan.wallThickness, state.floorPlan.depth - state.floorPlan.wallThickness - object.depth);
+    const bounds = getObjectFootprintBounds(object);
+    object.x = clamp(point.x - state.objectDrag.offsetX, state.floorPlan.wallThickness, state.floorPlan.width - state.floorPlan.wallThickness - bounds.width);
+    object.z = clamp(point.z - state.objectDrag.offsetZ, state.floorPlan.wallThickness, state.floorPlan.depth - state.floorPlan.wallThickness - bounds.depth);
     object.zone = deriveDepthZone(object, state.floorPlan);
     object.sideZone = deriveSideZone(object, state.floorPlan);
     state.objectDrag.moved = true;
-    rebuildMeshFromCurrentPlan();
     renderFloorPlan();
-    renderPreview();
     return;
   }
   if (!state.planDrag) return;
@@ -874,21 +895,43 @@ function rebuildDerivedModels() {
   render();
 }
 
+let _cachedColors = null;
+let _cachedColorsKey = "";
 function rebuildMeshFromCurrentPlan() {
   if (!state.floorPlan || !state.analysis) {
     state.mesh = null;
     return;
   }
-  const colors = sampleRegionColors(state.analysis);
-  state.mesh = cleanMesh(buildMeshFromFloorPlan(state.floorPlan, state.opts, colors));
+  const key = state.analysis.summary || "";
+  if (key !== _cachedColorsKey || !_cachedColors) {
+    _cachedColors = sampleRegionColors(state.analysis);
+    _cachedColorsKey = key;
+  }
+  state.mesh = cleanMesh(buildMeshFromFloorPlan(state.floorPlan, state.opts, _cachedColors));
+}
+
+function getObjectFootprintBounds(object) {
+  const turns = (((Math.round((object.rotation || 0) / (Math.PI / 2)) % 4) + 4) % 4);
+  return turns % 2 === 1
+    ? { width: object.depth, depth: object.width }
+    : { width: object.width, depth: object.depth };
+}
+
+function getObjectFootprintCenter(object) {
+  const bounds = getObjectFootprintBounds(object);
+  return {
+    x: object.x + bounds.width / 2,
+    z: object.z + bounds.depth / 2,
+    boundsWidth: bounds.width,
+    boundsDepth: bounds.depth,
+  };
 }
 
 function findObjectAtPlanPoint(point, plan) {
   for (let i = plan.objects.length - 1; i >= 0; i -= 1) {
     const object = plan.objects[i];
     const rot = object.rotation || 0;
-    const cx = object.x + object.width / 2;
-    const cz = object.z + object.depth / 2;
+    const { x: cx, z: cz } = getObjectFootprintCenter(object);
     const cos = Math.cos(-rot);
     const sin = Math.sin(-rot);
     const dx = point.x - cx;
@@ -913,8 +956,7 @@ function hitResizeHandle(point, obj, plan) {
   const rot = obj.rotation || 0;
   const cos = Math.cos(-rot);
   const sin = Math.sin(-rot);
-  const cx = obj.x + obj.width / 2;
-  const cz = obj.z + obj.depth / 2;
+  const { x: cx, z: cz } = getObjectFootprintCenter(obj);
   const lx = (point.x - cx) * cos - (point.z - cz) * sin;
   const lz = (point.x - cx) * sin + (point.z - cz) * cos;
   const hw = obj.width / 2;
@@ -950,25 +992,27 @@ function removeManualOpeningAtPoint(point) {
 }
 
 function deriveDepthZone(object, plan) {
-  const centerZ = object.z + object.depth / 2;
+  const centerZ = getObjectFootprintCenter(object).z;
   if (centerZ < plan.depth * 0.33) return "front";
   if (centerZ > plan.depth * 0.66) return "back";
   return "center";
 }
 
 function deriveSideZone(object, plan) {
-  const centerX = object.x + object.width / 2;
+  const centerX = getObjectFootprintCenter(object).x;
   if (centerX < plan.width * 0.34) return "left";
   if (centerX > plan.width * 0.66) return "right";
   return "center";
 }
 
 function overlapsRect(a, b, padding = 0) {
+  const aBounds = getObjectFootprintBounds(a);
+  const bBounds = getObjectFootprintBounds(b);
   return !(
-    a.x + a.width + padding <= b.x ||
-    b.x + b.width + padding <= a.x ||
-    a.z + a.depth + padding <= b.z ||
-    b.z + b.depth + padding <= a.z
+    a.x + aBounds.width + padding <= b.x ||
+    b.x + bBounds.width + padding <= a.x ||
+    a.z + aBounds.depth + padding <= b.z ||
+    b.z + bBounds.depth + padding <= a.z
   );
 }
 
@@ -1014,8 +1058,9 @@ function resolveObjectCollisions(objects, layout, wallThickness) {
     for (let dz = 0; dz <= layout.depth && !placed; dz += step) {
       for (let dx = 0; dx <= layout.width && !placed; dx += step) {
         for (const [sx, sz] of [[1,1],[-1,1],[1,-1],[-1,-1]]) {
-          const tx = clamp(object.x + dx * sx, wallThickness, layout.width - wallThickness - candidate.width);
-          const tz = clamp(object.z + dz * sz, wallThickness, layout.depth - wallThickness - candidate.depth);
+          const bounds = getObjectFootprintBounds(candidate);
+          const tx = clamp(object.x + dx * sx, wallThickness, layout.width - wallThickness - bounds.width);
+          const tz = clamp(object.z + dz * sz, wallThickness, layout.depth - wallThickness - bounds.depth);
           const test = { ...candidate, x: tx, z: tz };
           if (!resolved.some((existing) => overlapsRect(existing, test, 0.04))) {
             resolved.push(test);
@@ -1247,6 +1292,7 @@ function objectElement(label) {
     refrigerator: "metal", dishwasher: "metal", oven: "fire", grill: "fire",
     sink: "water", bathtub: "water", shower: "water", toilet: "water",
     "bathroom cabinet": "wood", "patio chair": "wood", "lounge chair": "wood", planter: "earth",
+    plant: "wood", rug: "earth", lamp: "fire", mirror: "water", "side table": "wood", ottoman: "earth",
   };
   return map[normalizeLabel(label)] || "earth";
 }
@@ -1368,7 +1414,7 @@ function buildFengShuiModel(plan, layout, analysis) {
 
   // ── 4. Qi Flow / Entry Path ──
   if (corridor) {
-    const blocked = plan.objects.some((o) => overlapsRect({ x: o.x, z: o.z, width: o.width, depth: o.depth }, corridor, 0.02));
+    const blocked = plan.objects.some((o) => overlapsRect(o, corridor, 0.02));
     if (blocked) {
       findings.push({ level: "warn", text: "Furniture blocks the qi flow path from the entrance." });
       recommendations.push("Clear a path from the door into the room so energy can circulate freely.");
@@ -1540,7 +1586,7 @@ function renderFloorPlan() {
     ctx.textAlign = "center";
     ctx.fillText("2D Floor Plan", cw / 2, ch / 2 - 10);
     ctx.font = "400 16px 'Space Grotesk', sans-serif";
-    ctx.fillText("Generate a room model to solve the top view first", cw / 2, ch / 2 + 18);
+    ctx.fillText("Upload a photo and click Analyze Layout", cw / 2, ch / 2 + 18);
     return;
   }
 
@@ -1596,10 +1642,10 @@ function renderFloorPlan() {
     const p = toCanvas(obj.x, obj.z);
     const w = obj.width * tf.scale;
     const d = obj.depth * tf.scale;
-    const cx = p.x + w / 2;
-    const cy = p.y + d / 2;
+    const bounds = getObjectFootprintBounds(obj);
+    const cx = p.x + (bounds.width * tf.scale) / 2;
+    const cy = p.y + (bounds.depth * tf.scale) / 2;
     const rot = obj.rotation || 0;
-    const dir = (((Math.round(rot / (Math.PI / 2)) % 4) + 4) % 4);
     const isSelected = state.selectedObjectIndex >= 0 && plan.objects[state.selectedObjectIndex] === obj;
     ctx.save();
     ctx.translate(cx, cy);
@@ -2075,6 +2121,7 @@ function initThreePreview() {
 }
 
 function handleThreePreviewResize() {
+  if (!threePreview) return;
   const width = els.modelCanvas.clientWidth || els.modelCanvas.width;
   const height = els.modelCanvas.clientHeight || els.modelCanvas.height;
   if (!width || !height) return;
@@ -2085,6 +2132,7 @@ function handleThreePreviewResize() {
 }
 
 function syncThreePreview() {
+  if (!threePreview) return;
   const roomSignature = JSON.stringify({
     room: state.roomModel ? {
       width: state.roomModel.width,
@@ -2107,6 +2155,7 @@ function syncThreePreview() {
 }
 
 function rebuildThreePreviewScene(resetCamera = false) {
+  if (!threePreview) return;
   const { root, controls, camera } = threePreview;
   root.clear();
   root.rotation.set(0, 0, 0);
@@ -2313,8 +2362,9 @@ function addFurniturePreview(parent, object, isSelected, floorThickness, scale) 
   const w = object.width * scale;
   const d = object.depth * scale;
   const h = Math.max(object.height * scale, 0.18 * scale);
-  const centerX = x + w / 2;
-  const centerZ = z + d / 2;
+  const bounds = getObjectFootprintBounds(object);
+  const centerX = x + (bounds.width * scale) / 2;
+  const centerZ = z + (bounds.depth * scale) / 2;
   const y = floorThickness;
   const label = normalizeLabel(object.label);
   const group = new THREE.Group();
@@ -2375,6 +2425,7 @@ function addBoxMesh(parent, x, y, z, width, height, depth, material) {
 }
 
 function renderThreePreview() {
+  if (!threePreview) return;
   threePreview.controls.update();
   threePreview.renderer.render(threePreview.scene, threePreview.camera);
   updateThreeCompass();
@@ -2391,7 +2442,7 @@ function updateThreeCompass() {
   els.compass3d.style.setProperty("--compass-rot", `${yaw}rad`);
 }
 
-function renderPreviewFallback(message = "Build the 2D plan first, then extrude it into 3D") {
+function renderPreviewFallback(message = "Upload a photo and click Analyze Layout") {
   const canvas = els.modelCanvas;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;

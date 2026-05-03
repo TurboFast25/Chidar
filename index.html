@@ -21,20 +21,69 @@
 
     <!-- Landing page -->
     <div id="landing" class="landing">
-      <div class="landing-content">
+      <button id="landing-theme" class="landing-theme-btn" type="button" aria-label="Toggle dark mode">🌙</button>
+      <div class="landing-hero">
+        <div class="qi-symbol">氣</div>
         <h1 class="landing-title">Qidar</h1>
-        <p class="landing-subtitle">Room layout meets ancient wisdom</p>
-        <div class="landing-card">
+        <p class="landing-subtitle">Where room layout meets the ancient art of energy flow</p>
+      </div>
+
+      <div class="landing-section">
+        <div class="landing-card landing-card-wide">
           <h2 class="landing-heading">What is Qi?</h2>
-          <p>In Chinese philosophy, <strong>qi</strong> (氣) is the vital life force that flows through all living things and spaces. It is the invisible energy that connects body, mind, and environment.</p>
-          <p>Feng shui — literally "wind and water" — is the practice of arranging your surroundings to harmonize with the natural flow of qi. When qi moves freely through a room, the space feels balanced, calm, and alive. When it stagnates or rushes, discomfort follows.</p>
-          <p><strong>Qidar</strong> analyzes your room from a single photo, builds a 2D floor plan, and evaluates your furniture layout against core feng shui principles — command position, the five elements, the bagua map, yin-yang balance, and qi flow — then gives you actionable guidance to improve your space.</p>
+          <p><strong>Qi</strong> (氣) — pronounced "chee" — is the vital life force that flows through all living things, spaces, and the natural world. In Chinese philosophy, everything is animated by qi: your body, your breath, and the rooms you inhabit.</p>
+          <p>When qi flows freely through a space, it feels <em>alive</em> — balanced, calm, and energizing. When qi stagnates behind clutter or rushes through narrow corridors, the space feels heavy, anxious, or draining.</p>
         </div>
-        <button id="landing-enter" class="landing-btn" type="button">Get Started</button>
+      </div>
+
+      <div class="landing-section">
+        <div class="landing-card">
+          <div class="landing-icon">🌊</div>
+          <h3>Feng Shui</h3>
+          <p>Literally "wind and water" — the 3,000-year-old practice of arranging your environment to harmonize with the natural flow of qi.</p>
+        </div>
+        <div class="landing-card">
+          <div class="landing-icon">☯️</div>
+          <h3>Yin &amp; Yang</h3>
+          <p>Every room balances rest and activity. Bedrooms favor soft yin energy; living spaces need activating yang.</p>
+        </div>
+        <div class="landing-card">
+          <div class="landing-icon">🧭</div>
+          <h3>Bagua Map</h3>
+          <p>A 3×3 energy grid mapping wealth, health, relationships, career, and creativity onto your floor plan.</p>
+        </div>
+      </div>
+
+      <div class="landing-section">
+        <div class="landing-card landing-card-wide">
+          <h2 class="landing-heading">How Qidar Works</h2>
+          <div class="landing-steps">
+            <div class="landing-step"><span class="step-num">1</span><span>Upload a photo of your room</span></div>
+            <div class="landing-step"><span class="step-num">2</span><span>AI analyzes walls, floor, and furniture</span></div>
+            <div class="landing-step"><span class="step-num">3</span><span>A 2D floor plan is generated automatically</span></div>
+            <div class="landing-step"><span class="step-num">4</span><span>Feng shui principles score your layout</span></div>
+            <div class="landing-step"><span class="step-num">5</span><span>Drag furniture, resize, and optimize your qi</span></div>
+            <div class="landing-step"><span class="step-num">6</span><span>Preview in 3D and export STL/OBJ</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="landing-section landing-section-principles">
+        <h2 class="landing-heading" style="text-align:center;width:100%;margin-bottom:20px">The Five Elements</h2>
+        <div class="landing-element"><span>🪵</span> Wood — growth, vitality</div>
+        <div class="landing-element"><span>🔥</span> Fire — passion, energy</div>
+        <div class="landing-element"><span>🪨</span> Earth — stability, nourishment</div>
+        <div class="landing-element"><span>🪙</span> Metal — clarity, precision</div>
+        <div class="landing-element"><span>💧</span> Water — wisdom, flow</div>
+      </div>
+
+      <div class="landing-cta">
+        <button id="landing-enter" class="landing-btn" type="button">Enter Qidar</button>
+        <p class="landing-cta-hint">No account needed · works in your browser</p>
       </div>
     </div>
 
-    <div class="page-shell" id="app-shell" hidden>
+    <div class="page-shell app-hidden" id="app-shell">
 
       <header class="topbar">
         <div class="brand-lockup">
@@ -118,6 +167,7 @@
                       <button class="toolbox-tab" data-ftab="bathroom">Bathroom</button>
                       <button class="toolbox-tab" data-ftab="outdoor">Outdoor</button>
                       <button class="toolbox-tab" data-ftab="kitchen">Kitchen</button>
+                      <button class="toolbox-tab" data-ftab="decor">Decor</button>
                     </nav>
                     <div class="furniture-panels" data-tab-group="furniture">
                       <div class="furniture-actions is-active" data-ftab="bedroom">
@@ -152,6 +202,14 @@
                         <button data-add-furniture="dishwasher" class="btn-ghost btn-sm" type="button">Dishwasher</button>
                         <button data-add-furniture="kitchen island" class="btn-ghost btn-sm" type="button">Island</button>
                       </div>
+                      <div class="furniture-actions" data-ftab="decor">
+                        <button data-add-furniture="plant" class="btn-ghost btn-sm" type="button">Plant</button>
+                        <button data-add-furniture="lamp" class="btn-ghost btn-sm" type="button">Lamp</button>
+                        <button data-add-furniture="rug" class="btn-ghost btn-sm" type="button">Rug</button>
+                        <button data-add-furniture="mirror" class="btn-ghost btn-sm" type="button">Mirror</button>
+                        <button data-add-furniture="side table" class="btn-ghost btn-sm" type="button">Side Table</button>
+                        <button data-add-furniture="ottoman" class="btn-ghost btn-sm" type="button">Ottoman</button>
+                      </div>
                     </div>
                     <span id="furniture-status" class="opt-hint">Analyze the room, then add furniture and drag it in the 2D plan.</span>
                   </div>
@@ -168,28 +226,29 @@
         <main class="workspace">
           <div class="card preview-card">
             <div class="preview-header">
-              <h2>Plan to Preview</h2>
+              <h2>Room Layout</h2>
               <div class="preview-actions">
                 <button id="export-stl" class="btn-ghost btn-sm" type="button" disabled>Export STL</button>
                 <button id="export-obj" class="btn-ghost btn-sm" type="button" disabled>Export OBJ</button>
               </div>
             </div>
+            <div id="fengshui-panel" class="fengshui-panel" hidden></div>
             <div class="preview-grid">
               <section class="stage-panel">
                 <div class="stage-header">
                   <h3>2D Floor Plan</h3>
-                  <span class="stage-caption">Image → top view</span>
+                  <span class="stage-caption">Interactive floor plan</span>
                 </div>
-                <canvas id="plan-canvas" class="plan-canvas" width="720" height="560"></canvas>
+                <canvas id="plan-canvas" class="plan-canvas" width="640" height="480"></canvas>
                 <p class="canvas-hint">Room boundary and furniture footprints</p>
               </section>
               <section class="stage-panel">
                 <div class="stage-header">
                   <h3>3D Preview</h3>
-                  <span class="stage-caption">Top view → extrusion</span>
+                  <span class="stage-caption">Live 3D model</span>
                 </div>
                 <div class="model-frame">
-                  <canvas id="model-canvas" class="model-canvas" width="1200" height="780"></canvas>
+                  <canvas id="model-canvas" class="model-canvas" width="800" height="520"></canvas>
                   <div class="compass-3d" aria-label="3D compass">
                     <div class="compass-3d-rose">
                       <div class="compass-3d-ring"></div>
@@ -207,7 +266,6 @@
                 <p class="canvas-hint">Click and drag to orbit · scroll to zoom</p>
               </section>
             </div>
-            <div id="fengshui-panel" class="fengshui-panel" hidden></div>
           </div>
         </main>
 
